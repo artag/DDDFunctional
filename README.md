@@ -64,7 +64,7 @@ in the code.
 * *time-based триггер* (you do something every day at 10 a.m.)
 * *наблюдение* (there are no more orders in the inbox to process, so do something else)
 
-We call these things *Domain Events*.
+>We call these things **Domain Events**.
 
 * Domain Events are the starting point for almost all of the business processes we want to model.
 
@@ -194,7 +194,7 @@ courier service. So let me add a "Shipment received by customer" event."
 После помещения всех Domain Events на доску/стену необходимо задать вопрос:
 "What made these Domain Events happen? (Что было причной появления этих Domain Events?)"
 
-We call these requests *commands* in DDD terminology
+>We call these requests **commands** in DDD terminology.
 
 * Commands are always written in the imperative (повелительное наклонение): "Do this for me."
 
@@ -224,6 +224,198 @@ the corresponding Domain Event would be "Order form sent."
 <img src="images/ch01_order-taking-process.jpg" alt="Order-taking process" width=800 >
 
 ## Шаг 2. Partitioning the Domain into Subdomains
+
+После шага 1 есть список команд и событий. Но общая картина пока что хаотична.
+
+Следующий шаг: Partition the problem domain into smaller subdomains.
+
+В примере весь "order-taking process" можно разделить: the order taking, the shipping, the billing,
+and so on.
+
+В разделении подобного рода может помочь физическое разделение бизнеса по отделам: отдел продаж,
+отдел доставки и т.д. Каждый из этих отделов можно рассматривать как domain.
+
+>**"Domain"** - an area of coherent knowledge (область логически связанных знаний).
+>
+>Альтернативное определение: **"domain"** is just that which a "domain expert" is
+>expert in.
+
+Внути домена могут быть области - subdomains.
+
+>**Subdomains** - a smaller part of a larger domain that has its own specialized knowledge.
+
+Пример subdomain: "web programming" это subdomain of "general programming." И "JavaScript
+programming" is a subdomain of web programming.
+
+Внизу, на картинке слева можно увидеть пример programming-related domains.
+
+Домены могут иметь области пересечения. В реальности границы доменов могут быть размытыми,
+нечеткими. В наших моделях необходимо выделить subdomains с более четкими границами.
+
+На картинке справа приведен domain-partitioning approach к order-taking process:
+
+<table>
+<tr>
+<td>
+
+![Programming-related domains](images/ch01_programming-related.jpg)
+
+</td>
+<td>
+
+![Domain-partitioning approach](images/ch01_domain-partitioning.jpg)
+
+</td>
+</table>
+
+Здесь domains немного перескаются. An order-taker (принимаюзий заказы) должен немного знать
+о том как работают отделы billing и shipping. Остальные отделы также должны хоть что-то знать
+о своих соседях для взаимодействия.
+
+## Шаг 3. Creating a Solution Using Bounded Contexts. (Создание решения с использованием ограниченных контекстов)
+
+Расмматриваемый домен может содержать много информации. Для решения определенной проблемы бизнеса
+необходимо выделить только ту информацию, которая требуется. Все остальное не имеет значения.
+
+Необходимо провести различие между "problem space" ("пространством проблем") и
+"solution space" ("пространством решений").
+
+Чтобы построить решение надо создать *модель* проблемной области, извлекая только
+те аспекты предметной области, которые имеют отношение к делу:
+
+<img src="images/ch01_problem-solution.jpg" alt="Problem space and solution space" width=800 >
+
+>В solution space видно что domains and subdomains в problem space отображаются на то,
+>что в терминах DDD называется **bounded contexts** (ограниченные контексты).
+
+Каждый bounded context это мини модель domain со своими правами.
+
+Почему *context*? Каждый контекст содержит определенные знания. В пределах контекста есть
+общий язык и логически-связный дизайн. Но вне контекста информация, взятая из него, может быть
+искажена или непригодна к использованию.
+
+Why *bounded* (ограниченный)? В реальном мире домены имеют нечеткие границы и содержат много
+информации. Domain model никогда не будет такой богатой, как в реальном мире будет иметь более
+четкие границы.
+
+Domain в problem space не всегда имеет однозначную связь с контекстом в solution space.
+Иногда domain разбивается на несколько bounded contexts (ограниченных контекстов).
+Или несколько domains в problem space моделируется только одним bounded context в
+solution space.
+
+Последнее часто встречается, когда необходимо интегрироваться с legacy.
+
+При разделении домена, важно, чтобы каждый bounded context нес четкую ответственность.
+Т.к. при реализации модели, каждый ограниченный контекст четко соответствовует какому-то
+программному компоненту. Компонентом может быть:
+
+* Отдельная сборка DLL
+* Автономный сервис
+* Простой namespace (пространство имен)
+
+### Getting the Contexts Right. (Правильное понимание/определение контекстов)
+
+Наибольшая сложность в domain-driven design это правильное определение context boundaries.
+
+Рекомендации:
+
+* *Listen to the domain experts* (слушайте доменных экспертов).
+
+* *Pay attention to existing team and department boundaries* (обратите внимание на существующие
+границы команд и отделов). Эти границы могут помочь при выделении domains and subdomains.
+Но это может не всегда работать.
+
+* *Don't forget the "bounded" part of a bounded context* (не забывайте о "ограниченной" части
+ограниченного контекста). Необходимо следить за изменениями границ при изменениях требований и
+условий. Границы должны быть четкими и по возможности неизменяемыми.
+
+* *Design for autonomy* (ориентации при проектировании на автономность). Всегда лучше иметь
+независимый и автономный bounded contexts, который можно разрабатывать независимо от остальных.
+
+* *Design for friction-free business workflows* (проектирование с учетом наименьших конфликтов
+между различными бизнес-процессами). Если бизнес-процесс взаимодействует с несколькими bounded
+contexts и часто блокируется или задерживается ими, то стоит переделать эти contexts.
+Отдавать приоритет простоте бизнес-процесса над красотой дизайна.
+
+* *No design is static*. Ни один из дизайнов не является неизменным: все они меняются при
+изменениях в бизнес требований.
+
+### Шаг 3.2. Creating Context Maps. (Создание карт контекста)
+
+После определения contexts нужно рассмотреть взаимодействия между ними.
+Надо создать общую картину взаимодействий не вдаваясь в детали дизайна.
+
+>В DDD такие диаграммы называются **Context maps** (контекстные карты/карты контекста).
+
+Пример: карта маршрута для путешествий. Она не показывает всех деталей, она фокусируется только
+на основных маршрутах. Например, вот набросок карты маршрута авиакомпании:
+
+<img src="images/ch01_airline-route-map.jpg" alt="Airline route map" width=600 >
+
+По данной карте можно узнать, как перемещаться между городами. Если необходимо что-то другое,
+например поездка в окрестностях New York, то нужна другая карта.
+
+Context map показывает несколько bounded contexts и их взаимодействия. Цель - не отобразить
+все детали, но показать всю систему в целом.
+
+Пример context map для order-taking system:
+
+<img src="images/ch01_context-map.jpg" alt="Context map for order-taking system" width=600 >
+
+* При создании context map нас не интересует внутренняя структура shipping context. Интересует
+только то, что shipping context получает данные от order-taking context.
+Мы неявно говорим, что shipping context находится *downstream* (нисходящий информационный поток),
+а order-taking context в *upstream*.
+
+* Два этих контекста должны будут согласовать общий формат для обмена сообщениями.
+
+  * Как правило, upstream задает формат обмена.
+
+  * Иногда downstream является негибким (legacy system) и либо восходящий контекст должен
+  адаптироваться, либо используется вводится translator component (посредник-преобразователь).
+
+* В сложных проектах создается серия context maps, каждая из которых описывает определенную
+подсистему.
+
+### Шаг 3.3. Focusing on the Most Important Bounded Contexts. (Фокусирование на наиболее важных ограниченных контекстах)
+
+На данный момент у нас есть несколько bounded contexts. При дальншей работе над domain их может
+стать больше. Но все ли они одинаково важны? С чего начать разработку?
+
+Как правило наиболее важны domains, которые обеспечивают бизнес-преимущество. Т.е те,
+которые приносят деньги. Другие домены также могут требоваться, но они не являются ключевыми.
+
+>Домены, которые обеспечивают бизнес-преимущество (приносят деньги) называются **core domains**
+>(основные домены).
+>
+>Остальные домены называются **supportive domains** (вспомогательные домены).
+>Если они неуникальны для бизнеса, то они называются **generic domains** (общие домены).
+
+Для рассматриваемого примера:
+
+* order-taking и shipping domains являются core (основные) domains, т.к. их бизнес-преимуществом
+является превосходное обслуживание клиентов.
+
+* billing domain будет рассматривается как supportive (вспомогательный) domain.
+
+* delivery of the shipments рассматривается как generic (общий) domain. - Можно передать на
+outsource.
+
+В реальности может быть все не так просто. Иногда core domain является не тот, что ожидался.
+Бизнес электронной коммерции может обнаружить, что наличие товаров на
+складе и готовность к отправке имеют решающее значение для удовлетворенности клиентов.
+В этом случае inventory management может стать core domain, столь же важной для
+успеха бизнеса, как и простой в использовании веб-сайт.
+
+Иногда нет единого мнения о том, что является самой важной областью;
+каждый отдел может считать, что его область является наиболее важной. А
+иногда core domain - это просто чтобы все работало.
+
+Однако во всех случаях важно расставлять приоритеты, и не пытаться реализовать все bounded contexts
+одновременно - это часто приводит к неудаче. Вместо этого надо сосредоточиться на bounded contexts,
+которые добавляют наибольшую ценность.
+
+## Creating a Ubiquitous Language. (Создание общего языка)
 
 # Links
 
