@@ -196,7 +196,8 @@ courier service. So let me add a "Shipment received by customer" event."
 
 >We call these requests **commands** in DDD terminology.
 
-* Commands are always written in the imperative (повелительное наклонение): "Do this for me."
+* Commands are always written in the imperative (повелительное наклонение, неопределенная форма
+глагола): "Do this for me."
 
 * Не все команды всегда успешно выполняются (но это рассматривается позже, вначале интересно
 успешное выполнение команды).
@@ -407,15 +408,102 @@ outsource.
 В этом случае inventory management может стать core domain, столь же важной для
 успеха бизнеса, как и простой в использовании веб-сайт.
 
-Иногда нет единого мнения о том, что является самой важной областью;
-каждый отдел может считать, что его область является наиболее важной. А
-иногда core domain - это просто чтобы все работало.
+Иногда нет единого мнения о том, что является самой важной областью; каждый отдел может считать,
+что его область является наиболее важной. А иногда core domain - это просто чтобы все работало.
 
 Однако во всех случаях важно расставлять приоритеты, и не пытаться реализовать все bounded contexts
 одновременно - это часто приводит к неудаче. Вместо этого надо сосредоточиться на bounded contexts,
 которые добавляют наибольшую ценность.
 
 ## Creating a Ubiquitous Language. (Создание общего языка)
+
+Разработчик и доменный эксперт должны использовать одну и ту же модель.
+
+Это значит, что если доменный эксперт называет что-то `"order"`, то и разработчик должен
+использовать в своей работе что-то под названием `Order`, которое ведет себя похожим образом.
+
+Разработчику не следует использовать термины, которые не знакомы доменному эксперту:
+
+* `OrderFactory`
+* `OrderManager`
+* `OrderHelper`
+
+>Набор понятий и словарного запаса, который является общим для всех членов команды,
+>называется **Ubiquitous Language** (вездесущим языком).
+
+Этот язык должен во всех областях проекта:
+
+* в требованиях
+* в дизайне
+* в исходном коде (самое главное).
+
+Ubiquitous Language постоянно развивается и меняется вместе с дизайином и бизнесом.
+
+В каждом контексте будет свой "диалект" Ubiquitous Language: одно и то же слово может означать
+разные вещи. Например, "Customer" или "Product" в различных контекстах могут заметно отличаться.
+
+## Summarizing the Concepts of Domain-Driven Design
+
+* **Domain** (домен/предметная область) это область знаний, связанная (ассоциирующаяся) с
+проблемой, которую пытаемся решить или просто, в которой "domain expert" является экспертом.
+
+* **Domain Model** (модель домена/предметной области) это набор упрощений, представляющих те
+аспекты domain (домена/предметной области) которые относятся к конкретной проблеме.
+Domain model это часть solution space (пространства решений), тогда как domain - это часть
+problem space (пространства проблем).
+
+* **Ubiquitous Language** это набор понятий и словарного запаса, которые соответствуют domain.
+Это язык, общий для команды и исходного кода.
+
+* **Bounded context** (ограниченный контекст) это подсистема в solution space (пространстве решений)
+с четкими границами , которые четко отделяют ее от друших подсистем. A bounded context
+часто соответствует subdomain в the problem space (пространтве проблем). A bounded context
+также имеет свой набор понятий и словарь, свой диалект в Ubiquitous Language.
+
+* **Context Map** (карта контекста) это высокоуровневая диаграмма, показывающая bounded contexts
+и взаимодействия между ними.
+
+* **Domain Event** (доменное событие/событие предметной области) - запись о чем-то, что произошло
+в системе. Обычно описывается в прошедшем времени. Событие часто является триггером для
+других действий.
+
+* **Command** - это запрос на выполнение какого-либо действия/процесса, который инициируется
+человеком или другим событием. Если дествие/процесс завершается успешно, состояние системы
+изменяется и записывается одно или несколько Domain Events (событий домена).
+
+## Wrapping Up. (Подведение итогов)
+
+Важносто создать общую модель предметной области и решения. Модель, одинаковую для команды
+разработчиков и экспертов предметной области.
+
+Четыре принципа, которые помогут сделать это:
+
+* Focus on events and processes rather than data.
+* Partition the problem domain into smaller subdomains.
+* Create a model of each subdomain in the solution.
+* Develop an "everywhere language" that can be shared between everyone involved in the project.
+
+### Events and Processes
+
+The event-storming session quickly revealed all the major Domain Events in the domain.
+
+### Subdomains and Bounded Contexts
+
+We have discovered three subdomains so far: "Order Taking", "Shipping" and "Billing".
+
+We then defined three bounded contexts to correspond with these subdomains
+and created a context map that shows how these three contexts interact.
+
+Which one is the core domain that we should focus on?
+
+### The Ubiquitous Language
+
+We have terms like "order form", "quote" and "order".
+
+It would be a good idea to create a living document or wiki page that lists these terms
+and their definitions.
+
+# Chapter 2. Understanding the Domain
 
 # Links
 
