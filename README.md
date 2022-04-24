@@ -114,8 +114,8 @@ order-taking process.
 
 <img src="images/ch01_domain_events.jpg" alt="Domain events after event storming" width=600 >
 
-`Place order` и `Ship order` это бизнес-процессы, мы начинаем понимать, как свъобытия
-объединяются в более крупные рабочие процессы.
+`Place order` и `Ship order` это business workflows (бизнес-процессы), мы начинаем понимать,
+как события объединяются в более крупные рабочие процессы.
 
 Выгоды от использования Event Storming:
 
@@ -579,6 +579,276 @@ and their definitions.
 <img src="images/ch02_place_order_event.jpg" alt="Place Order event" width=600 >
 
 ## Fighting the Impulse to Do Database-Driven Design
+
+Если у разработчика большой опыт работы с БД, то он может начать разработку приложения с
+таблиц БД.
+
+На данном этапе можно запланировать создание следующих таблиц их relationships:
+
+* `Order`
+* `OrderLine`
+* `Customer`
+* `Address`
+* `Product`
+
+<img src="images/ch02_domain_dd.jpg" alt="Database-driven design" width=600 >
+
+**Это ошибка**. В domain-driven design, *domain* задает design, а не база данных:
+
+1. В реальном мире нет баз данных.
+2. Конепция "база данных" не часть ubiquitous language. Пользователям не важно как обрабатываются
+данные.
+
+>В терминах DDD такое игнорирование обработки данных называется **persistence ignorance**.
+
+3. Если проектировать дизайн с точки зрения базы данных, то дизайн будет искажен.
+4. Не все бизнес правила можно просто и точно отразить в структуре БД.
+5. Дизайн может (и будет) меняться. В БД сложно менять уже существующую структуру.
+
+## Fighting the Impulse to Do Class-Driven Design
+
+Если у разработчика большой опыт работы с ООП, то проектирование домена с точки зрения
+классов может также исказить дизайн.
+
+Например, для разделения заказов на `Order` и `Quote` разработчик может создать побочный класс
+`OrderBase`, которого нет в реальности. Это искажение домена. Попробуйте попросить
+объяснить domain expert что такое `OrderBase`.
+
+<img src="images/ch02_class_dd.jpg" alt="Class-driven design" width=600 >
+
+**Итоговые выводы** после этих двух подразделов: во время сбора требований держите разум
+открытым и не навязывайте домену свои технические мысли, идеи и реализации.
+
+## Documenting the Domain
+
+Как задокументировать требования без "технического" влияния?
+
+Можно использовать визуальные диаграммы (такие как UML), но:
+
+1. С ними часто сложно работать.
+2. Они недостаточно подробны, чтобы охватить некоторые тонкости предметной области.
+
+Решение: использование простого text-based языка (простое текстовое описание).
+Преимущества такого описания в том, что его можно показать domain expert.
+
+Используется text-based язык со следующими правилами:
+
+* Для workflows (бизнес процессов), документируем входы и выходы, для бизнес логики используем
+простой псевдокод.
+* Для структур данных используются:
+  * **AND** - требуются все виды/типы данных. Например:
+
+  ```text
+  Name AND Address
+  ```
+
+  * **OR** - требуется либо одни данные, либо другие. Например:
+
+  ```text
+  Email OR PhoneNumber
+  ```
+
+### Документирование `Place Order`
+
+Вот как можно задокументировать `Place Order` workflow:
+
+```text
+Bounded context: Order-Taking
+
+Workflow: "Place order"
+    triggered by:
+        "Order form received" event (where Quote is not checked)
+    primary input:
+        An order form
+    other input:
+        Product catalog
+    output events:
+        "Order Placed" event
+    side-effects:
+        An acknowledgement is sent to the customer, along with the placed order
+```
+
+Документация структур данных для этого бизнес-процесса:
+
+```text
+Bounded context: Order-Taking
+
+data Order =
+    CustomerInfo =
+    AND ShippingAddress
+    AND BillingAddress
+    AND list of OrderLines
+    AND AmountOfBill
+
+data OrderLine =
+    Product
+    AND Quantity
+    AND Price
+
+data CustomerInfo = ??      // don't know yet
+data BillingAddress = ??    // don't know yet
+```
+
+Аналогично делается для заказа вида Quote и соответствующих структур данных.
+
+## Diving Deeper into the Order-Taking Workflow
+
+Продолжение выяснения деталей по the order-placing process.
+
+1.1 Каждый день с утра, после получения писем, идет их сортировка.
+
+1.2 Формы заказа Order помещаются в одну стопку, с Quote - в другую.
+
+1.3 Order'ы более важны, т.к. именно они приносят деньги.
+
+1.4 Обработка Order'ов идет в первую очередь, Quote обрабатываются позже.
+
+**Итог**. Здесь видно, что приоритет при разработке следует отдать обработке заказов в виде `Order`, т.к.
+именно это приносит деньги.
+
+2.1 После сортировки проверяется валидность customer's name, email, shipping address,
+billing address.
+
+2.2 Адреса проверяются через сторонний сервис (приложение).
+
+2.3 После проверки адреса преобразуются в стандартный формат, который принят у delivery service.
+
+3.1 Если имя и адрес not valid, то они помечаются красным цветом на форме заказа.
+
+3.2 Not valid форма заказа помещается в специальную стопку с not valid заказами.
+
+3.3 Потом человек обзванивает заказчиков с not valid заказами и просит их скорректировать свои
+заказы.
+
+**Итог**. Здесь видно, что есть три очереди из форм заказов, одна из которых наиболее приоритетна.
+
+4.1 После идет валидация кодов продуктов, указанных в форме заказа.
+
+4.2 Коды продуктов Widgets начинаются с `W`, далее идут 4 цифры.
+
+4.3 Коды продуктов Gizmos начинаются с `G`, далее идут 3 цифры.
+
+4.4 Коды продуктов не меняются. Новые виды кодов не добавляются.
+
+4.5 Валидные коды продуктов есть у проверяющего в справочнике.
+
+4.6 Если код продукта из формы не найден в справочнике, то форма помечается как invalid и
+кладется в стопку с not valid заказами.
+
+4.7 Работа проверяющего должна быть автономной и не зависеть от других продуктовых команд.
+
+**Итог**. Здесь видно:
+
+* Проверка формата кодов продуктов чисто синтактическая.
+* Справочник в виде книги может быть сделан в виде БД.
+* Служба, обрабатывающая заказы должная быть автономной и не зависеть от других служб и команд.
+
+5.1 Проверка количества товара
+
+5.2 Widget'ы продаются по unit'ам (поштучно). Количество указывается в виде целых чисел.
+
+5.3 Gizmos продаются в килограммах. Килограммы представлены в виде десятичных чисел.
+
+6.1 Для каждого продукта вычисляется его суммарная цена (цена x количество).
+
+6.2 Цены всех товаров суммируются и вычисляется total amount to bill (общая выставляемая сумма).
+
+7.1 Делается две копии формы заказа.
+
+7.2 Первая копия заказа идет в shipping outbox.
+
+7.3 Вторая копия заказа идет в billing outbox.
+
+7.4 Скан формы заказа прикрепляется к email с подтверждением и отправляется обратно клиенту.
+
+## Representing Complexity in Our Domain Model
+
+После еще одного выяснения деталей, бизнес процесс (workflow) усложнился еще сильнее, что очень
+хорошо. Чем раньше будут учтены все детали, тем лучше.
+
+<img src="images/ch02_workflow_diagram.jpg" alt="Workflow diagram" width=600 >
+
+Эта диаграмма не учитывает всех деталей, поэтому в документировании лучше использовать
+text-based язык (как это было сделано ранее).
+
+### Representing Constraints. (Представление ограничений)
+
+Важно делать описание с точки зрения domain expert. Ограничения валидации являются частью дизайна.
+
+Первыми опишем примитивные значения: коды продуктов и их количество.
+
+```text
+Bounded context: Order-Taking
+
+data WidgetCode = string starting with "W" then 4 digits
+data GizmoCode = string starting with "G" then 3 digits
+data ProductCode = WidgetCode OR GizmoCode
+
+data OrderQuantity = UnitQuantity OR KilogramQuantity
+data UnitQuantity = integer between 1 and ?
+data KilogramQuantity = decimal between ? and ?
+```
+
+Описывая количество продуктов, увидели, что не были уточнены нижний и верхний пределы.
+Domain expert сообщил про ограничения на количество продуктов и описание становится таким:
+
+```text
+Bounded context: Order-Taking
+
+data WidgetCode = string starting with "W" then 4 digits
+data GizmoCode = string starting with "G" then 3 digits
+data ProductCode = WidgetCode OR GizmoCode
+
+data OrderQuantity = UnitQuantity OR KilogramQuantity
+data UnitQuantity = integer between 1 and 1000
+data KilogramQuantity = decimal between 0.05 and 100.0
+```
+
+### Representing the Life Cycle of an Order. (Представление жизненного цикла заказа)
+
+Теперь описание заказа. Сделанное ранее описание заказа:
+
+```text
+data Order =
+    CustomerInfo
+    AND ShippingAddress
+    AND BillingAddress
+    AND list of OrderLines
+    AND AmountToBill
+```
+
+Такое описание не отображает жизненный цикл заказа, который описал domain expert. Заказ проходит
+несколько стадий: unvalidated (после получения письма), validated, priced.
+
+Жизненный цикл заказа можно описать так:
+
+1. Unvalidated Order
+
+```text
+data UnvalidatedOrder =
+    UnvalidatedCustomerInfo
+    AND UnvalidatedShippingAddress
+    AND UnvalidatedBillingAddress
+    AND list of UnvalidatedOrderLine
+
+data UnvalidatedOrderLine =
+    UnvalidatedProductCode
+    AND UnvalidatedOrderQuantity
+```
+
+2. Validated Order
+
+```text
+data ValidatedOrder =
+    ValidatedCustomerInfo
+    AND ValidatedShippingAddress
+    AND ValidatedBillingAddress
+    AND list of ValidatedOrderLine
+
+data ValidatedOrderLine =
+    ValidatedProductCode
+    AND ValidatedOrderQuantity
+```
 
 # Links
 
