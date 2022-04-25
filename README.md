@@ -836,6 +836,8 @@ data UnvalidatedOrderLine =
     AND UnvalidatedOrderQuantity
 ```
 
+*Примечание: unvalidated order не имеет данных о ценах.*
+
 2. Validated Order
 
 ```text
@@ -849,6 +851,161 @@ data ValidatedOrderLine =
     ValidatedProductCode
     AND ValidatedOrderQuantity
 ```
+
+*Примечание: все линии validated order должны быть проверены, а не только некоторые из них.*
+
+3. Priced Order
+
+* `PricedOrderLine` это `ValidatedOrderLine` плюс `LinePrice`
+* `AmountToBill` вычисляется как сумма цен по каждой `ProductOrderLine`
+
+```text
+data PricedOrder =
+    ValidatedCustomerInfo
+    AND ValidatedShippingAddress
+    AND list of PricedOrderLine     // different from ValidatedOrderLine
+    AND AmountOfBill                // new
+
+data PricedOrderLine =
+    ValidatedOrderLine
+    AND LinePrice                   // new
+```
+
+4. Order acknowledgement
+
+```text
+data PlacedOrderAcknowledgement =
+    PricedOrder
+    AND AcknowledgementLetter
+```
+
+### Fleshing out the Steps in the Workflow. (Конкретизация шагов в бизнес-процессе)
+
+Вначале мы думали, что workflow (бизнес-процесс) "Place Order" заканчивается событием
+"Order Placed".
+
+Но потом выяснили что все сложнее и возможные итоговые значения для workflow могут быть:
+
+* Посылка события "Order placed" в shipping/bulling. ИЛИ
+* Добавление invalid формы заказа в специальную стопку с not valid заказами и пропуск остальных
+шагов.
+
+<table>
+<tr>
+<td>
+
+Первоначальное text-based описание workflow:
+
+```text
+Bounded context: Order-Taking
+
+Workflow: "Place order"
+    triggered by:
+        "Order form received" event (where Quote is not checked)
+    primary input:
+        An order form
+    other input:
+        Product catalog
+    output events:
+        "Order Placed" event
+    side-effects:
+        An acknowledgement is sent to the customer, along with the placed order
+```
+
+</td>
+<td>
+
+Расширенное (уточненное) text-based описание workflow:
+
+```text
+workflow "Place Order" =
+    input: OrderForm
+    output:
+        OrderPlaced event (put on a pile to send to other teams)
+        OR InvalidOrder (put on appropriate pile)
+
+    // step 1
+    do ValidateOrder
+    If order is invalid then:
+        add InvalidOrder to pile
+        stop
+
+    // step 2
+    do PriceOrder
+
+    // step 3
+    do SendAcknowledgmentToCustomer
+
+    // step 4
+    return OrderPlaced event (if no errors)
+```
+
+</td>
+</table>
+
+### Более детальное документирование отдельных шагов
+
+После уточнения документации всего workflow можно сделать более подробную документацию для
+каждого отдельного шага.
+
+1. ValidateOrder
+
+```text
+substep "ValidateOrder" =
+    input: UnvalidatedOrder
+    output: ValidatedOrder OR ValidationError
+    dependencies: CheckProductCodeExists, CheckAddressExists
+
+    validate the customer name
+    check that the shipping and billing address exist
+    for each line:
+        check product code syntax
+        check that product code exists in ProductCatalog
+
+    if everything is OK, then:
+        return ValidatedOrder
+    else:
+        return ValidationError
+```
+
+*Зависимости: product catalog (`CheckProductCodeExists`) и внешний address checking service*
+*(`CheckAddressExists`)*.
+
+2. PriceOrder
+
+```text
+substep "PriceOrder" =
+    input: ValidatedOrder
+    output: PricedOrder
+    dependencies: GetProductPrice
+
+    for each line:
+        get the price for the product
+        set the price for the line
+    set amount to bill ( = sum of the line prices)
+```
+
+*Зависимости: product catalog (`GetProductPrice`)*.
+
+3. SendAcknowledgementToCustomer
+
+```text
+substep "SendAcknowledgementToCustomer" =
+    input: PricedOrder
+    output: None
+
+    create acknowledgment letter and send it
+    and the priced order to the customer
+```
+
+## Wrapping Up. (Подведение итогов)
+
+* При документировании domain важно не вносить сюда технические детали (БД, классы).
+
+* Консультация у domain expert выявила некоторые дополнительные моменты, которые не были известны
+на первом этапе.
+
+# Chapter 3. A Functional Architecture
 
 # Links
 
