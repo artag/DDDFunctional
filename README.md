@@ -909,7 +909,8 @@ Workflow: "Place order"
     output events:
         "Order Placed" event
     side-effects:
-        An acknowledgement is sent to the customer, along with the placed order
+        An acknowledgement is sent to the customer,
+        along with the placed order
 ```
 
 </td>
@@ -1007,8 +1008,182 @@ substep "SendAcknowledgementToCustomer" =
 
 # Chapter 3. A Functional Architecture
 
+Для описания архитектуры используется терминология из статьи Simon Brown's C4
+(см. [Simon Brown's "C4" approach](http://static.codingthearchitecture.com/c4.pdf)).
+Согласно C4 архитектура приложений состоит из 4х уровней:
+
+1. "System context" - верхний уровень, представляет всю систему.
+2. System context состоит из "containers", каждый из который представляет единицу развертывания
+(вебсайт, веб-сервис, база данных, ...).
+3. Каждый container включает в себя "components" - основные строительные блоки в коде.
+4. Каждый component включает в себя "classes" (или в ФП - "modules") - содержат внутри себя
+низкоуровневые методы или функции.
+
+Одна из целей хорошей архитектуры - определить различные boundaries между containers, components,
+modules. Чтобы минимизировать "cost of change" (стоимость изменений).
+
+## Bounded Contexts as Autonomous (автономные) Software Components
+
+Важно, чтобы контекст представлял собой autonomous subsystem (автономную подсистему) с
+well-defined boundary (четко определенными границами).
+
+Возможные варианты реализации context как autonomous subsystem:
+
+1. Вся система реализована как single monolithic deployable (a single container в терминах C4).
+
+Bounded context может быть:
+
+* отдельный module с well-defined interface
+* отдельный .NET assembly (предпочтельней)
+
+2. Все bounded context системы могут быть deployed separately.
+
+Bounded context может быть deployed separately в виде:
+
+* отдельный container как в classic service-oriented architecture
+* отдельный container, как в microservice architecture
+
+На ранних этапах разработки не обязательно придерживаться какого-то конкретного
+подхода. Перевод с logic дизайна на deployable эквивалент не является критичным, если мы уверены,
+что bounded context остаются decoupled и autonomous (расцепленными и автономными).
+
+**Итог**.
+
+* В начале разработки boundaries могут быть определены не совсем точно.
+* По мере изучения domain boundaries могут изменяться.
+* В начале проще делать монолитное приложение. И только потом, если потребуется, разбить его
+на отдельные decoupled containers. Микросервисы вносят дополнительную сложность
+(см. ["Martin Fowler - "MicroservicePremium"](https://www.martinfowler.com/bliki/MicroservicePremium.html)).
+
+## Communicating (взаимодействие) Between Bounded Contexts
+
+Для взаимодействия между bounded contexts используются event.
+
+Пример такого взаимодействия:
+
+* The `Place-Order` workflow emits ("кидает") an `OrderPlaced` event.
+* The `OrderPlaced` event помещается в очередь или публикуется еще каким-либо способом.
+* The shipping context следит за появлением `OrderPlaced` events.
+* Когда event получен, создается `ShipOrder`command.
+* `ShipOrder` command запускает `Ship-Order` workflow (бизнес-процесс).
+* Когда `Ship-Order` workflow успешно завершается, он emits ("кидает") `OrderShipped` event.
+
+<img src="images/ch03_communication.jpg" alt="Communication between bounded contexts" width=700 >
+
+Это decoupled design: the upstream component (the order-taking subsystem) and the downstream component (the
+shipping subsystem) не зависят друг от друга и общаются только посредством events.
+
+Механизм передачи events зависит от выбора архитектуры:
+
+* Queues хороши для buffered asynchronous communication. Они выбираются при реализации
+microservices or agents.
+
+* В monolithic system можно использовать
+  * похожий внутренний queuing подход
+  * простую связь между upstream и downstream component через вызов функции
+
+Механизм передачи можно выбрать позднее.
+
+Handler который передает events может быть:
+
+* частью downstream context
+* [separate router](http://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRouter.html)
+* [process manager](https://www.slideshare.net/BerndRuecker/long-running-processes-in-ddd)
+
+Два последних являются отдельными элементами инфраструктуры.
+
+### Transferring Data Between Bounded Contexts
+
+* Event может быть в виде
+  * simple signal
+  * data, которые пересылаются другому downstream компоненту
+  * reference to shared data (если объем пересылаемх данных большой)
+
+>Пересылаемые data object называются **Data Transfer Objects** or **DTO**s
+
+DTO могут быть похожи на объекты домена и содержать те же данные, но это другие объекты.
+DTO проектируются для сериализации/десериализации.
+
+На границах upstream context, domain objects конвертируются в DTOs, которые сериализуются в
+JSON, XML, или другие форматы:
+
+<img src="images/ch03_output_dto.jpg" alt="DTO from upstream context" width=600 >
+
+Для downstream context процесс повторяется в обратном порядке -
+JSON или XML десереализуются в DTO, которое конвертируется в domain object:
+
+<img src="images/ch03_input_dto.jpg" alt="DTO to downstream context" width=600 >
+
+### Trust Boundaries (границы доверия) and Validation
+
+Периметр bounded context действует как "trust boundary" (границы доверия).
+
+Все объекты внутри bounded context всегда trusted и valid.
+
+Объекты вне bounded context всегда untrusted и могут быть invalid.
+
+Мы добавляем "gates" ("ворота") в начало и конец workflow (бизнес-процесса), которые действуют
+как шлюзы между двумя мирами.
+
+<img src="images/ch03_boundaries.jpg" alt="DTO to downstream context" width=600 >
+
+**Задача входного gate** - валидация входных данные, чтобы они удовлетворяли ограничениям
+domain model.
+
+Пример:
+
+* Какое-то свойство `Order` должно быть non-null и менее 50 символов.
+* Входящий `OrderDTO` может не иметь таких ограничений.
+* После валидации мы будем уверены, что объект домена `Order`не будет содержать ошибок.
+* Если валидация закончится ошибкой, то workflow будет bypassed и создана ошибка (сообщение об ошибке).
+
+**Задача выходного gate** - фильтрация выходных данных. Важно чтобы private информация
+не вышла за пределы bounded context.
+
+Пример: фильтрация номера кредитной карты, используемой для оплаты заказа.
+
+## Contracts Between Bounded Contexts
+
+Объекты коммуникации (events и DTOs) всегда вносят некоторую связность (контракты) между
+Bounded Contexts.
+
+Контракты могут быть:
+
+* *Shared Kernel* - один формат данных для общения разных contexts. Изменение формата требует
+согласования с обеих сторон.
+
+• *Customer/Supplier* или [*Consumer Driven Contract*](https://www.infoq.com/articles/consumer-driven-contracts) -
+downstream context определяет контракт, который требуется от upstream context.
+
+* *Conformist* - противоположный предыдущему. downstream context подстривается под контракт
+upstream context.
+
+### Anti-Corruption Layers
+
+ch03_context_map.jpg
+ch03_workflow_in_out.jpg
+ch03_workflow_placeorder.jpg
+ch03_domain_events_1.jpg
+ch03_domain_events_2.jpg
+ch03_codeflow_vertical_1.jpg
+ch03_codeflow_vertical_2.jpg
+ch03_codeflow_horizontal.jpg
+ch03_onion.jpg
+
 # Links
 
 * [EventStorming book by Alberto Brandolini](http://eventstorming.com)
 
 Alberto Brandolini - создатель метода "Event Storming".
+
+* [Simon Brown's "C4" approach](http://static.codingthearchitecture.com/c4.pdf)
+
+* [Martin Fowler - "MicroservicePremium"](https://www.martinfowler.com/bliki/MicroservicePremium.html)
+
+* [Message Router Pattern](http://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRouter.html)
+
+* [Long running processes in DDD slides](https://www.slideshare.net/BerndRuecker/long-running-processes-in-ddd)
+
+* [Martin Fowler - "Data Transfer Object"](https://martinfowler.com/eaaCatalog/dataTransferObject.html)
+
+* [Service-Oriented Development with Consumer-Driven Contracts](https://www.infoq.com/articles/consumer-driven-contracts)
