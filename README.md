@@ -901,7 +901,8 @@ Bounded context: Order-Taking
 
 Workflow: "Place order"
     triggered by:
-        "Order form received" event (where Quote is not checked)
+        "Order form received" event
+        (where Quote is not checked)
     primary input:
         An order form
     other input:
@@ -922,8 +923,10 @@ Workflow: "Place order"
 workflow "Place Order" =
     input: OrderForm
     output:
-        OrderPlaced event (put on a pile to send to other teams)
-        OR InvalidOrder (put on appropriate pile)
+        OrderPlaced event
+          (put on a pile to send to other teams)
+        OR InvalidOrder
+          (put on appropriate pile)
 
     // step 1
     do ValidateOrder
@@ -1152,23 +1155,168 @@ Bounded Contexts.
 * *Shared Kernel* - один формат данных для общения разных contexts. Изменение формата требует
 согласования с обеих сторон.
 
-• *Customer/Supplier* или [*Consumer Driven Contract*](https://www.infoq.com/articles/consumer-driven-contracts) -
+* *Customer/Supplier* или [*Consumer Driven Contract*](https://www.infoq.com/articles/consumer-driven-contracts) -
 downstream context определяет контракт, который требуется от upstream context.
 
-* *Conformist* - противоположный предыдущему. downstream context подстривается под контракт
+* *Conformist* - противоположный предыдущему. downstream context подстраивается под контракт
 upstream context.
 
 ### Anti-Corruption Layers
 
-ch03_context_map.jpg
-ch03_workflow_in_out.jpg
-ch03_workflow_placeorder.jpg
-ch03_domain_events_1.jpg
-ch03_domain_events_2.jpg
-ch03_codeflow_vertical_1.jpg
-ch03_codeflow_vertical_2.jpg
-ch03_codeflow_horizontal.jpg
-ch03_onion.jpg
+Очень часто для взаимодействия с внешними системами используется интерфейс. Иногда интерфейс,
+который есть в наличии не совпадает с domain model.
+
+В таком случае требуется дополнительная прослойка снаружи bounded context, чтобы domain model
+не была "испорчена" знаниями о внешнем мире.
+
+>Такой дополнительный уровень decoupling между contexts называется **Anti-Corruption Layer**
+>(**ACL**) в терминологии DDD.
+
+"Input gate", описанный выше, является примером ACL.
+
+Основная задача ACL это не валидация данных, а их трансформация. Например - трансформация данных
+из словаря order-taking context в словарь shipping context.
+
+ACL часто используется для взаимодействия с third-party components.
+
+### A Context Map with Relationships
+
+Для проектируемой системы определяем тип взаимодействий между contexts.
+
+Например, для описываемой order-taking системы:
+
+* Между order-taking и shipping context тип взаимодействия "Shared Kernel"
+(общий формат обмена - по договоренности).
+* Между order-taking и billing context тип взаимодействия "Consumer-Driven Contract"
+(формат определяется downstream context).
+* Между order-taking и product catalog тип взаимодействия "Conformist"
+(формат определяется upstream context).
+* Между order-taking и address service тип взаимодействия с использованием ACL
+(транформация данных).
+
+<img src="images/ch03_context_map.jpg" alt="Context Map with Relationships" width=450 >
+
+## Workflows Within a Bounded Context
+
+* Бизнес-процессы рассматриваются как мини-процессы, запускаемые command и которые генерируют
+одну или несколько Domain Events.
+
+* В функциональной архитектуре каждый такой процесс представлен одной функцией,
+где на входе объект command а на выходе list event objects.
+
+* Public workflow - рабочие-процессы, запуск которых инициируется снаружи.
+
+* Workflow должен находиться в пределах одного bounded context. Он никогда не должен реализовывать
+сценарий "end-to-end" и проходить через несколько contexts.
+
+<img src="images/ch03_workflow_in_out.jpg" alt="Public Workflow within bounded context" width=450 >
+
+Из одного context в другой должна посылаться только необходимая для работы информация.
+
+Например, `OrderPlaced` event должен содержать только данные, необходимые для работы
+billing context. Это значит, что нужно создать новый, специальный для billing
+event `BillableOrderPlaced`:
+
+```text
+data BillableOrderPlaced =
+    OrderId
+    AND BillingAddress
+    AND AmountToBill
+```
+
+И еще нужен отдельный event для подтверждения заказа - `OrderAcknowledgmentSent`.
+
+Диаграмма workflow "Place Order" с несколькими event'ами:
+
+<img src="images/ch03_workflow_placeorder.jpg" alt="Workflow 'Place Order' with events" width=550 >
+
+### Avoid Domain Events Within a Bounded Context
+
+В ООП принят подход, когда все Domain Events генерируются внутри bounded context.
+
+Внутри context один из объектов workflow генерирует событие `OrderPlaced`. Специальные handlers
+(listeners) "ловят" это событие и генерируют другие события: `BillableOrderPlaced` и т.д.
+Выглядит это так:
+
+<img src="images/ch03_domain_events_1.jpg" alt="OOP style events creation" width=650 >
+
+В ФП предпочтительно не использовать этот подход, поскольку он создает
+скрытые зависимости. Вместо этого, если нужен listener для event, то мы просто
+добавляем его в конец workflow следующим образом:
+
+<img src="images/ch03_domain_events_2.jpg" alt="FP style events creation" width=650 >
+
+Такой подход более понятен - нет глобальных менеджеров событий с изменяемым состоянием
+и поэтому его легче понимать и поддерживать.
+
+## Code Structure Within a Bounded Context
+
+Традиционный "layered approach" (картинка слева).
+
+<table>
+<tr>
+<td>
+
+<img src="images/ch03_codeflow_vertical_1.jpg" alt="Layered approach workflow 1" width=325 >
+
+</td>
+<td>
+
+<img src="images/ch03_codeflow_vertical_2.jpg" alt="Layered approach workflow 2" width=200 >
+
+</td>
+</table>
+
+Workflow проходит через все слои - сверху вниз и обратно. Недостаток: если надо поменять что-то
+в работе workflow, то это затронет все слои.
+
+Более походящим решением может быть организация workflow в виде "vertical slices" (рисунок справа).
+Хотя такое решение все еще неидеально. Представление в горизонтальном виде:
+
+<img src="images/ch03_codeflow_horizontal.jpg" alt="Horizontal workflow" width=500 >
+
+### The Onion Architecture
+
+Приципы [Onion Architecture](http://jeffreypalermo.com/blog/the-onion-architecture-part-1/):
+
+* Domain layer в центре.
+* Каждый слой зависит только от внутренних слоев и не видит внешние.
+* Все зависимости направлены внутрь.
+
+<img src="images/ch03_onion.jpg" alt="Onion Architecture" width=450 >
+
+Аналогичные подходы:
+[Hexagonal Architecture](http://alistair.cockburn.us/Hexagonal+architecture) и
+[Clean Architecture](https://8thlight.com/blog/uncle-bob/2012/08/13/the-clean-architecture.html)
+
+### Keep I/O at the Edges
+
+Предсказуемость поведения функций в ФП обеспечивается следующим:
+
+* Использование immutable (неизменяемых) данных где только возможно.
+* Пытаться избегать side effects в функциях:
+  * Избегать randomness
+  * Избегать mutation of variables
+  * Избегать операций I/O
+
+Как получать/сохранять данные?
+
+Пытаться поместить все операции I/O ближе к границам onion.
+Для workflow - I/O желательно располагать в его начале или конце.
+
+## Wrapping Up
+
+* *Domain Object* - объект, предназначенный для использования только в пределах context.
+* *Data Transfer Object* или *DTO* - объект, предназначенный для сериализации и
+совместного использования между contexts.
+* *Shared Kernel*, *Customer/Supplier*, и *Conformist* - различные виды
+отношений между bounded contexts.
+* *Anti-Corruption Layer* или *ACL* - компонент, который переводит концепции
+из одного domain в другой, чтобы уменьшить coupling (сцепление) и позволить domains
+развиваться независимо.
+* *Persistence Ignorance* - domain model должна основываться только
+на концепциях только domain и не должна содержать какой-либо информации
+о базах данных или других механизмах хранения и обработки информации.
 
 # Links
 
@@ -1187,3 +1335,11 @@ Alberto Brandolini - создатель метода "Event Storming".
 * [Martin Fowler - "Data Transfer Object"](https://martinfowler.com/eaaCatalog/dataTransferObject.html)
 
 * [Service-Oriented Development with Consumer-Driven Contracts](https://www.infoq.com/articles/consumer-driven-contracts)
+
+* [Inverse Conway maneuver](http://bit.ly/InverseConwayManeuver)
+
+* [Onion Architecture](http://jeffreypalermo.com/blog/the-onion-architecture-part-1/)
+
+* [Hexagonal Architecture](http://alistair.cockburn.us/Hexagonal+architecture)
+
+* [Clean Architecture](https://8thlight.com/blog/uncle-bob/2012/08/13/the-clean-architecture.html)
