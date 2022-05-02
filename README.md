@@ -4,6 +4,8 @@
 
 * [Part 1. Understanding the Domain](part1.md)
 
+* [Part 2. Modeling the Domain](part2.md)
+
 ## Links
 
 * [EventStorming book by Alberto Brandolini](http://eventstorming.com)
@@ -29,3 +31,5 @@ Alberto Brandolini - создатель метода "Event Storming".
 * [Hexagonal Architecture](http://alistair.cockburn.us/Hexagonal+architecture)
 
 * [Clean Architecture](https://8thlight.com/blog/uncle-bob/2012/08/13/the-clean-architecture.html)
+
+* [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
