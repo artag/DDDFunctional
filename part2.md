@@ -207,6 +207,247 @@ printQuantity anOrderQtyInKg        // "2.5 kg"
 
 ## Building a Domain Model by Composing Types
 
+Пример. Описание домена payments for an e-commerce site.
+
+Документация данных.
+
+```fsharp
+type CheckNumber = CheckNumber of int
+type CardNumber = CardNumber of string
+
+type CardType =
+    Visa | Mastercard
+
+type CreditCardInfo = {
+    CardType : CardType
+    CardNumber : CardNumber
+}
+
+type PaymentMethod =
+    | Cash
+    | Check of CheckNumber
+    | Card of CreditCardInfo
+
+type PaymentAmount = PaymentAmount of decimal
+type Currency = EUR | USD
+
+type Payment = {
+    Amount : PaymentAmount
+    Currency : Currency
+    Method : PaymentMethod
+}
+```
+
+Документация функций.
+
+```fsharp
+type PayInvoice =
+    UnpaidInvoice -> Payment -> PaidInvoice
+
+type ConvertPaymentCurrency =
+    Payment -> Currency -> Payment
+```
+
+## Modeling Optional Values, Errors, and Collections
+
+* Optional or missing values
+* Errors
+* Functions that return no value
+* Collections
+
+### Modeling Optional Values
+
+Для отсутствующего значения в F# используется тип `Option`:
+
+```fsharp
+type Option<'a> =
+    | Some of 'a
+    | None
+```
+
+Пример использования для описания типа `PersonalName`:
+
+```fsharp
+type PersonalName = {
+    FirstName : string
+    MiddleInitial : Option<string>      // optional
+    LastName : string
+}
+```
+
+Чаще всего записывают в такой форме:
+
+```fsharp
+type PersonalName = {
+    FirstName : string
+    MiddleInitial : string option       // optional
+    LastName : string
+}
+```
+
+### Modeling Errors
+
+В F# предпочтительно документировать возможность ошибки путем использования типа `Result`:
+
+```fsharp
+type Result<'Success, 'Failure> =
+    | Ok of 'Success
+    | Error of 'Failure
+```
+
+Тип `Result` входит в стандартные библиотеки F# начиная с версии F# 4.1.
+
+Пример использования:
+
+```fsharp
+type PayInvoice =
+    UnpaidInvoice -> Payment -> Result<PaidInvoice, PaymentError>
+
+type PaymentError =
+    | CardTypeNotRecognized
+    | PaymentRejected
+    | PaymentProviderOffline
+```
+
+### Modeling No Value at All
+
+Отсутствие выходного значения у функции в F#:
+
+```fsharp
+type SaveCustomer = Customer -> unit
+```
+
+Отсутствие входных значений у функции в F# (без параметров):
+
+```fsharp
+type NextRandom = unit -> int
+```
+
+Наличие `unit` в сигнатуре функции часто является признаком наличия у фукции side effect.
+
+### Modeling Lists and Collections
+
+Типы коллекций в F#:
+
+* `list` - неизменяемая коллекция, определенного размера. Реализована в виде linked list
+(связный список).
+* `array` - изменяемая коллекция, определенного размера. Каждый элемент доступен по индексу.
+* `ResizeArray` - массив изменяемого размера. Аналогичен по функциональности `List<T>` в C#.
+* `seq` - lazy коллекция, каждый элемент возвращается по запросу. Аналогичен по функциональности
+`IEnumerable<T>` в C#.
+* `Map` (аналогичен `Dictionary`) и `Set`. Редко используются в domain model.
+
+В domain model чаще всего используется `list`.
+
+Пример использования:
+
+```fsharp
+type Order = {
+    OrderId : OrderId
+    Lines : OrderLine list      // a collection
+}
+```
+
+Создание `list`, добавление элемента к существующему `list`:
+
+```fsharp
+let aList = [1; 2; 3]
+
+let aNewList = 0 :: aList       // [0; 1; 2; 3]
+```
+
+Deconstruct `list`:
+
+```fsharp
+let printList1 aList =
+    match aList with
+    | [] -> printfn "list is empty"
+    | [x] -> printfn "list has one element: %A" x
+    | [x; y] -> printfn "list has two elements: %A and %A" x y
+    | longerList -> printfn "list has more than two elements"
+```
+
+Match с использованием "cons" оператора:
+
+```fsharp
+let printList2 aList =
+    match aList with
+    | [] -> printfn "list is empty"
+    | first :: rest -> printfn "list is not empty with the first element being: %A" first
+```
+
+## Organizing Types in Files and Projects
+
+В F# порядок файлов важен. Файлы, расположенные выше, не могут ссылаться на файлы,
+ расположенные ниже.
+
+Файлы проекта могут быть расположены в подобном порядке:
+
+```text
+Common.Types.fs
+Common.Functions.fs
+OrderTaking.Types.fs
+OrderTaking.Functions.fs
+Shipping.Types.fs
+Shipping.Functions.fs
+```
+
+В файле, порядок описаний типов и функций также важен:
+
+```fsharp
+module Payments =
+    type CheckNumber = CheckNumber of int
+
+    type PaymentMethod =
+        | Cash
+        | Check of CheckNumber      // определен выше
+        | Card of ...
+
+    type Payment = {
+        Amount : ...
+        Currency : ...
+        Method : PaymentMethod     // определен выше
+    }
+```
+
+Когда требуется писать код без ограничения "top down", то можно использовать `rec` (F# 4.1 и выше)
+или `and`. Но лучше, когда дизайн "устаканится", писать в стиле "top down".
+
+Пример использования `rec`:
+
+```fsharp
+module rec Payments =
+    type Payment = {
+        Amount : ...
+        Currency : ...
+        Method : PaymentMethod      // определен ниже
+    }
+
+type PaymentMethod =
+    | Cash
+    | Check of CheckNumber          // определен ниже
+    | Card of ...
+
+type CheckNumber = CheckNumber of int
+```
+
+Пример использования `and`:
+
+```fsharp
+type Payment = {
+    Amount : ...
+    Currency : ...
+    Method : PaymentMethod          // определен ниже
+}
+
+and PaymentMethod =
+    | Cash
+    | Check of CheckNumber          // определен ниже
+    | Card of ...
+
+and CheckNumber = CheckNumber of int
+```
+
 # Links
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
