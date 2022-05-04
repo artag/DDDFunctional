@@ -448,6 +448,108 @@ and PaymentMethod =
 and CheckNumber = CheckNumber of int
 ```
 
+# Chapter 5. Domain Modeling with Types
+
+## Reviewing the Domain Model
+
+Text-based документация domain model, сделанная ранее:
+
+```text
+context: Order-Taking
+
+// --------------------
+// Simple types
+// --------------------
+
+// Product Codes
+data ProductCode = WidgetCode OR GizmoCode
+data WidgetCode = string starting with "W" then 4 digits
+data GizmoCode = string starting with "G" then 3 digits
+
+// Order Quantity
+data OrderQuantity = UnitQuantity OR KilogramQuantity
+data UnitQuantity = integer between 1 and 1000
+data KilogramQuantity = decimal between 0.05 and 100.0
+```
+
+```text
+// --------------------
+// Order life cycle
+// --------------------
+
+// ----- unvalidated state -----
+data UnvalidatedOrder =
+    UnvalidatedCustomerInfo
+    AND UnvalidatedShippingAddress
+    AND UnvalidatedBillingAddress
+    AND list of UnvalidatedOrderLine
+
+data UnvalidatedOrderLine =
+    UnvalidatedProductCode
+    AND UnvalidatedOrderQuantity
+
+// ----- validated state -----
+data ValidatedOrder =
+    ValidatedCustomerInfo
+    AND ValidatedShippingAddress
+    AND ValidatedBillingAddress
+    AND list of ValidatedOrderLine
+
+data ValidatedOrderLine =
+    ValidatedProductCode
+    AND ValidatedOrderQuantity
+
+// ----- prices state -----
+data PricedOrder =
+    ValidatedCustomerInfo
+    AND ValidatedShippingAddress
+    AND list of PricedOrderLine
+    AND AmountOfBill
+
+data PricedOrderLine =
+    ValidatedOrderLine
+    AND LinePrice
+
+// ----- output events -----
+data OrderAcknowledgmentSent =
+    PricedOrder
+    AND AcknowledgementLetter
+
+data OrderPlaced = PricedOrder
+
+data BillableOrderPlaced =
+    OrderId
+    AND BillingAddress
+    AND AmountToBill
+```
+
+```text
+// --------------------
+// Workflows
+// --------------------
+workflow "Place Order" =
+    input: UnvalidatedOrder
+    output (on success):
+        OrderAcknowledgmentSent
+        AND OrderPlaced (to send to shipping)
+        AND BillableOrderPlaced (to send to billing)
+    output (on error):
+        InvalidOrder
+// etc
+```
+
+## Seeing Patterns in a Domain Model
+
+Из текстового описания domain можно выделить повторяющиеся паттерны:
+
+* *Simple values*. Примитивные типы: `string`, `integer` и т.п. Доменный эксперт не думает в
+подобных терминах, а думает в терминах таких как `OrderId` и `ProductCode`.
+* *Combinations of values with AND*. Группы связанных данных.
+* *Choices with OR*. Выбор данных. `Order` или `Quote`, `UnitQuantity` или `KilogramQuantity`.
+* *Workflows*. Бизнес-процессы. Имеют input и output.
+
+## Modeling Simple Values
+
 # Links
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
