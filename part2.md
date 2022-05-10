@@ -550,6 +550,714 @@ workflow "Place Order" =
 
 ## Modeling Simple Values
 
+Синтаксис:
+
+```text
+type CustomerId = CustomerId of int
+     ^type name   ^case label
+```
+
+Для нашего domain:
+
+```fsharp
+type WidgetCode = WidgetCode of string
+type UnitQuantity = UnitQuantity of int
+type KilogramQuantity = KilogramQuantity of decimal
+```
+
+### Working with Single Case Unions
+
+```text
+type CustomerId = CustomerId of int
+                  ^this case name will be constructor function
+```
+
+Создание типа (использование конструктора):
+
+```fsharp
+let customerId = CustomerId 42
+```
+
+Два разных типа неэквивалентны:
+
+```fsharp
+type CustomerId = CustomerId of int
+type OrderId = OrderId of int
+
+let customerId = CustomerId 42
+let orderId = OrderId 42
+
+printfn "%b" (orderId = customerId)     // Ошибка компиляции
+```
+
+Деконструкция:
+
+```fsharp
+let (CustomerId innerValue) = customerId        // innerValue = 42
+printfn "%i" innerValue                         // выведет "42"
+```
+
+Деконструкция в параметре определяемой функции:
+
+```fsharp
+// val processCustomerId: CustomerId -> unit
+let processCustomerId (CustomerId innerValue) =
+    printfn "innerValue is %i" innerValue
+```
+
+### Constrained Values
+
+См. следующую главу 6.
+
+### Avoiding Performance Issues with Simple Types
+
+Такое "обертывание" несколько замедляет работу программ. Если необходимо ускориться, то можно:
+
+1. Использовать type alias. Нет overhead, но теряется type-safety.
+
+```fsharp
+type UnitQuantity = int
+```
+
+2. Начиная с F# 4.1 можно использовать value type (a struct). Overhead есть, но есть оптимизация
+по доступу в памяти.
+
+```fsharp
+[<Struct>]
+type UnitQuantity = UnitQuantity of int
+```
+
+3. При работе с большими массивами, можно рассмотреть определение коллекции примитивных типов
+как один тип. Это позволит эффективно работать с внутренними данными (например, перемножение матриц)
+и сохранит type-safety.
+
+```fsharp
+type UnitQuantities = UnitQuantities of int[]
+```
+
+## Modeling Complex Data
+
+### Modeling with Record Types
+
+Используются для моделирования структур данных **AND**.
+
+Такое text-based описание:
+
+```text
+data Order =
+    CustomerInfo
+    AND ShippingAddress
+    AND BillingAddress
+    AND list of OrderLines
+    AND AmountToBill
+```
+
+В F# можно записать в виде record:
+
+```fsharp
+type Order = {
+    CustomerInfo : CustomerInfo
+    ShippingAddress : ShippingAddress
+    OrderLines : OrderLine list
+    AmountToBill : BillingAmount
+}
+```
+
+### Modeling Unknown Types
+
+Для этапов разработки, когда еще неизвестно внутреннее содержимое некоторых типов
+можно этот момент явно указать при описании типа.
+
+**Решение** - использование исключения. В F# это `exn`. Также рекомендуется задать alias, который потом
+используется в коде:
+
+```fsharp
+type Undefined = exn
+```
+
+Использование alias:
+
+```fsharp
+type CustomerInfo = Undefined
+type ShippingAddress = Undefined
+type BillingAddress = Undefined
+type OrderLine = Undefined
+type BillingAmount = Undefined
+
+type Order = {
+    CustomerInfo : CustomerInfo
+    ShippingAddress : ShippingAddress
+    BillingAddress : BillingAddress
+    OrderLines : OrderLine list
+    AmountToBill : BillingAmount
+}
+```
+
+Такой подход позволит описать domain и скомпилировать код. Но при написании функций, которые будут
+работать с типами domain надо будет заменить `Undefined` на рабочий код.
+
+### Modeling with Choice Types
+
+Используются для моделирования структур данных **OR**.
+
+Такое text-based описание:
+
+```text
+data ProductionCode =
+    WidgetCode
+    OR GizmoCode
+
+data OrderQuantity =
+    UnitQuantity
+    OR KilogramQuantity
+```
+
+В F# можно записать в виде descriminated union:
+
+```fsharp
+type ProductCode =
+    | Widget of WidgetCode
+    | Gizmo of GizmoCode
+
+type OrderQuantity =
+    | Unit of UnitQuantity
+    | Kilogram of KilogramQuantity
+```
+
+Где
+
+```text
+| Widget of WidgetCode
+  ^tag      ^type
+```
+
+tag - наименование case
+
+type - тип данных, который ассоциируется с tag
+
+## Modeling Workflows with Functions
+
+Описали все "nouns" (существительные) для domain, теперь надо описать "verbs"
+(глаголы) - бизнес-процессы.
+
+Бизнес-процессы описываются с помощью function types:
+
+```fsharp
+type ValidateOrder = UnvalidatedOrder -> ValidatedOrder
+```
+
+### Working with Complex Inputs and Outputs
+
+#### Результат бизнес-процесса - несколько выходов (связь AND)
+
+1. Надо создать тип record, объединяющий выходы.
+2. Описать function type с общим типом в качестве выхода.
+
+Например, результатом бизнес-процесса являются три события. Эти события объединяются в один тип:
+
+```fsharp
+type PlaceOrderEvents = {
+    AcknowledgmentSent : AcknowledgemntSent
+    OrderPlaced : OrderPlaced
+    BillableOrderPlaced : BillableOrderPlaced
+}
+```
+
+Function type, описывающий бизнес-процесс `Place Order`, будет выглядеть так:
+
+```fsharp
+type PlaceOrder = UnvalidatedOrder -> PlaceOrderEvents
+```
+
+#### Результат бизнес-процесса - один из нескольких выходов (связь OR)
+
+1. Надо создать тип discriminated union (DU), объединяющий выходы.
+2. Описать function type с общим типом в качестве выхода.
+
+Пример, есть вот такое text-based описание бизнес-процесса:
+
+```text
+workflow "Categorize Inbound Mail" =
+    input: Envelope contents
+    output:
+        QuoteForm (put on appropriate pile)
+        OR OrderForm (put on appropriate pile)
+        OR ...
+```
+
+Его описание в виде кода. Данные:
+
+```fsharp
+type EnvelopeContents = EnvelopeContents of string
+type CategorizedMail =
+    | Quote of QuoteForm
+    | Order of OrderForm
+    // etc
+```
+
+Действие:
+
+```fsharp
+type CategorizeInboundMail = EnvelopeContents -> CategorizedMail
+```
+
+#### У бизнес-процесса несколько входов. Требуется только один (связь OR)
+
+Надо создать тип discriminated union (DU), объединяющий входы.
+
+#### У бизнес-процесса несколько входов. Требуются все (связь AND)
+
+Бизнес-процесс, например:
+
+```text
+"Calculate Prices" =
+    input: OrderForm, ProductCatalog
+    output: PricedOrder
+```
+
+Возможно два варианта реализации.
+
+1. Самый простой. Передать каждый вход как отдельный параметр в функцию:
+
+```fsharp
+type CalculatePrices = OrderForm -> ProductCatalog -> PricedOrder
+```
+
+Используется если один из параметров это зависимость от другого сервиса.
+Функциональный dependency injection.
+
+2. Создать тип record, объединяющий входы. Иногда используются tuple.
+
+```fsharp
+type CalculatePriceInput = {
+    OrderForm : OrderForm
+    ProductCatalog : ProductCatalog
+}
+```
+
+Function type будет выглядеть так:
+
+```fsharp
+type CalculatePrices = CalculatePricesInput -> PricedOrder
+```
+
+Используется, если входные параметры логически связаны друг с другом.
+
+### Documenting Effects in the Function Signature
+
+>В ФП используется термин **effects** - побочные эффекты, которые производит функция помимо
+>выходных данных.
+
+Функция не всегда может успешно завершиться и возвратить какое-либо значение. Ипользуется тип
+`Result` для описания такого effect:
+
+```fsharp
+type ValidateOrder =
+    UnvalidatedOrder -> Result<ValidatedOrder, ValidationError list>
+```
+
+Функция асинхронна и может завершиться с ошибкой:
+
+```fsharp
+type ValidateOrder =
+    UnvalidatedOrder -> Async<Result<ValidatedOrder, ValidationError list>>
+```
+
+Такая сигнатура типа выглядит плохо читаемой, поэтому для нее можно ввести alias:
+
+```fsharp
+type ValidationResponse<'a> = Async<Result<'a, ValidationError list>>
+```
+
+Функция будет выглядеть так:
+
+```fsharp
+type ValidateOrder =
+    UnvalidatedOrder -> ValidationResponse<ValidatedOrder>
+```
+
+## A Question of Identity: Value Objects
+
+>В DDD объект с явным идентификатором называется **Entity**, без него - **Value Object**.
+
+В большинстве случаев объекты данных без явной идентичности (идентификаторов) взаимозаменяемы,
+т.е. являются Value Object'ами.
+
+Например, адреса, имена, почтовые индексы - примеры Value Objects.
+
+```fsharp
+let widgetCode1 = WidgetCode "W1234"
+let widgetCode2 = WidgetCode "W1234"
+printfn "%b" (widgetCode1 = widgetCode2)    // prints "true"
+
+let name1 = {FirstName="Alex"; LastName="Adams"}
+let name2 = {FirstName="Alex"; LastName="Adams"}
+printfn "%b" (name1 = name2)                // prints "true"
+
+let address1 = {StreetAddress="123 Main St"; City="New York"; Zip="90001"}
+let address2 = {StreetAddress="123 Main St"; City="New York"; Zip="90001"}
+printfn "%b" (address1 = address2)          // prints "true"
+```
+
+### Implementing Equality for Value Objects
+
+В F# по умолчанию все поля алгебраических типов структурно эквивалентны. Все такие типы в F#
+можно рассматривать как Value Objects.
+
+## A Question of Identity: Entities
+
+Примеры Entity: orders, quotes, invoices, customer profiles, product sheets, ...
+
+* Различие между Value Object и Enitity зависит от контекста.
+
+* Enitity может содержать в себе один или несколько Value Object.
+
+* При изменении Value Object, Entity, который его содержит остается прежним.
+
+Пример: смартфон (Entity), у которого поменяли экран или батарею.
+
+### Identifiers for Entities
+
+Entity должен иметь стабильный идентификатор, не зависящий от изменений.
+
+* Идентфикатором должен быть уникальный ключ, присущий определенному Entity.
+* Под идентфикатор выделяется отдельное поле, типа "Order ID" или "Customer ID".
+
+Пример:
+
+```fsharp
+type ContactId = ContactId of int
+
+type Contact = {
+    ContactId : ContactId
+    PhoneNumner : ...
+    EmailAddress : ...
+}
+```
+
+Источники для идентификаторов:
+
+* Реально существующий domain: бумажные orders, invoices, ...
+* Сервис(ы), генерирующий UUIDs.
+* Столбцы идентификаторов в БД.
+
+### Adding Identifiers to Data Definitions
+
+В случае типа record добавить идентификатор просто. С discriminated union не все так просто.
+Есть два спопоба добавления поля id.
+
+1. **Способ 1**. Идентификатор хранится "снаружи" Entity. Менее распространенный.
+
+
+
+```fsharp
+// Info for the unpaid case (without id)
+type UnpaidInvoiceInfo = ...
+
+// Info for the paid case (without id)
+type PaidInvoiceInfo = ...
+
+// Combined information (without id)
+type InvoiceInfo =
+    | Unpaid of UnpaidInvoiceInfo
+    | Paid of PaidInvoiceInfo
+
+// Id for invoice
+type InvoiceId =
+
+// Top level invoice type
+type Invoice = {
+    InvoiceId : InvoiceId           // "outside" the two child cases
+    InvoiceInfo : InvoiceInfo
+}
+```
+
+Недостаток: сложно работать с данными для одного case, данные разделяются между несколькими
+компонентами.
+
+1. **Способ 2**. Идентификатор хранится "внутри" Entity. Наиболее популярный способ.
+
+```fsharp
+type UnpaidInvoice = {
+    InvoiceId : InvoiceId       // id stored "inside"
+    // and other info for the unpaid case
+}
+
+type PaidInvoice = {
+    InvoiceId : InvoiceId       // id stored "inside"
+    // and other info for the paid case
+}
+
+// top level invoice type
+type Invoice =
+    | Unpaid of UnpaidInvoice
+    | Paid of PaidInvoice
+```
+
+Преимущество: все данные доступны в одном месте. Например для pattern matching:
+
+```fsharp
+let invoice = Paid { InvoiceId = ... }
+
+match invoice with
+    | Unpaid unpaidInvoice -> printfn "The unpaid invoiceId is %A" unpaidInvoice.InvoiceId
+    | Paid paidInvoice -> printfn "The paid invoiceId is %A" paidInvoice.InvoiceId
+```
+
+### Implementing Equality for Entities
+
+Для Entity эквивалентность определяется по одному полю - полю идентификатора. Т.к. в F#
+по умолчанию при эквивалентности рассматриваются все поля типа, то необходимо
+переопределить Equality.
+
+**1 Способ**. Надо переопределить следующее:
+
+* Override метод `Equals`.
+* Override метод `GetHashCode`.
+* Добавить атрибуты `CustomEquality` и `NoComparison` к типу, чтобы сообщить компилятору
+о переопределении Equality.
+
+Что получается в итоге:
+
+```fsharp
+[<CustomEquality; NoComparison>]
+type Contact = {
+    ContactId : ContactId
+    PhoneNumber : PhoneNumber
+    EmailAddress : EmailAddress
+    }
+    with
+    override this.Equals(obj) =
+        match obj with
+        | :? Contact as c -> this.ContactId = c.ContactId
+        | _ -> false
+    override this.GetHashCode() =
+        hash this.ContactId
+```
+
+После такого переопределения Equality можно сравнивать между собой `Contact`s:
+
+```fsharp
+// Определение двух Contact
+let contactId = ContactId 1
+
+let contact1 = {
+    ContactId = contactId
+    PhoneNumber = PhoneNumber "123-456-7890"
+    EmailAddress = EmailAddress "bob@example.com"
+}
+
+let contact2 = {
+    ContactId = contactId
+    PhoneNumber = PhoneNumber "123-456-7890"
+    EmailAddress = EmailAddress "robert@example.com"
+}
+
+// Сравнение
+printfn "%b" (contact1 = contact2)      // true
+```
+
+Это распространенный подход в ООП, но такой подход может приводить к ошибкам:
+
+* При изменении Equality потом можно получить результаты отличные от ожидаемых
+(забыли о переопределении и рассчитывали на поведение по умолчанию).
+* Забыли переопределить Equality.
+
+**2 Способ**. Более простой и предпочтительный поход:
+
+* Добавить атрибуты `NoEquality` и `NoComparison` к типу, чтобы запретить компилятору
+прямое сравнение типов.
+
+```fsharp
+[<NoEquality; NoComparison>]
+type Contact = {
+    ContactId : ContactId
+    PhoneNumber : PhoneNumber
+    EmailAddress : EmailAddress
+}
+```
+
+Теперь, при попытке напрямую сравнить объекты типа `Contact` друг с другом будет ошибка компиляции:
+
+```fsharp
+printfb "%b" (contact1 = contact2)      // ошибка компиляции
+```
+
+Можно сравнить объекты `Contact` по id только явным образом:
+
+```fsharp
+printfn "%b" (contact1.ContactId = contact2.ContactId)      // true
+```
+
+#### Переопределение Equality в Entity для нескольких полей
+
+Добавление дополнительного (синтетического) поля, которое будет содержать поля, по которым
+производится сравнение. В примере это дополнительное поле `Key`:
+
+```fsharp
+[<NoEquality; NoComparison>]
+type OrderLine = {
+    OrderId : OrderId
+    ProductId : ProductId
+    Qty : int
+    }
+    with
+    member this.Key =
+        (this.OrderId, this.ProductId)
+```
+
+И сравнение можно делать так:
+
+```fsharp
+printfn "%b" (line1.Key = line2.Key)
+```
+
+### Immutability and Identity
+
+* Для *ValueObject* неизменяемость необходима.
+* *Entity* может меняться. В ФП в таком случае создается *копия* с изменениями.
+
+Пример изменения Entity в ФП стиле:
+
+```fsharp
+let initialPerson = { PersonId = PersonId 42; Name = "Joseph" }
+let updatedPerson = { initialPerson with Name = "Joe" }
+```
+
+Преимущества изменений в ФП стиле - явное изменение видно в сигнатуре функции:
+
+```fsharp
+type UpdateName = Person -> Name -> Person
+```
+
+## Aggregates
+
+Рассмотрим `Order` и `OrderLine`.
+
+1. `Order` является Entity. Т.к. состав в заказе может меняться, при этом заказ остается тот же
+самый.
+2. `OrderLine` является Entity. У него может меняться количество товара, но при этом `OrderLine`
+остается тем же самым.
+3. Изменение `OrderLine` влечет за собой иземенение и `Order`.
+
+Pseudocode для обновления цены order line:
+
+```fsharp
+// Три параметра:
+// 1. order - заказ, в котором меняется строка
+// 2. orderLineId - id строки заказа для изменения
+// 3. newPrice - новая цена товара
+let changeOrderLinePrice order orderLineId newPrice =
+    // 1. find the line to change using the orderLineId
+    let orderLine = order.OrderLines |> findOrderLine orderLineId
+
+    // 2. make a new version of the OrderLine with the new price
+    let newOrderLine = { orderLine with Price = newPrice }
+
+    // 3. create a new list of lines, replacing the old line with the new line
+    let newOrderLines =
+        order.OrderLines |> replaceOrderLine orderLineId newOrderLine
+
+    // 4. make a new version of the entire order,
+    //    replacing all the old lines with the new lines
+    let newOrder = { order with OrderLines = newOrderLines }
+
+    // 5. return the new order
+    newOrder
+```
+
+>В DDD Entity которые содержат другие Entity называются **Aggregate**.
+>Или по другому - aggregate это коллекция domain objects, которые могут быть рассмотрены как
+>single unit.
+>Entity верхнего уровня называется **Aggregate root**.
+
+### Aggregates Enforce Consistency and Invariants. (Агрегаты обеспечивают согласованность и инварианты)
+
+Aggregate поддерживает согласованность внутренних данных: когда одна часть aggregate обновляется,
+другие части также должны быть обновлены для обспечения согласованности.
+
+Aggregate root - единственный компонент, который "знает" как сохранить согласованность.
+
+Также aggregate поддерживает invariants. Например, может быть правило, что в заказе должна быть
+хотя бы одна строка. Удаление этой строки должно вызвать ошибку. Aggregate гарантирует наличие
+хотя бы одной строки.
+
+### Aggregate References
+
+Если нужно связать `Order` и `Customer`, то не надо делать так:
+
+```fsharp
+type Order = {
+    OrderId : OrderId
+    Customer : Customer
+    OrderLines : OrderLine list
+    // etc
+}
+```
+
+Недостаток: при любом изменении `Customer` потребуется изменение `Order`.
+
+
+Более грамотный подход - хранение *reference* (ссылки) на `Customer`:
+
+```fsharp
+type Order = {
+    OrderId : OrderId
+    CustomerId : CustomerId     // ссылка на customer
+    OrderLines : OrderLine list
+    // etc
+}
+```
+
+Когда нам нужна полная информация о клиенте, мы получаем идентификатор `Customer` из `Order`,
+а затем загружаем соответствующую информацию о `Customer`.
+
+Другими словами, `Customer` и `Order` *различные* и *независимые* aggregates.
+Каждый из них отвечает за свою собственную внутреннюю согласованность, и
+единственная связь между ними осуществляется через их идентификаторы root объектов.
+
+Это приводит к еще одному важному аспекту aggregates: они являются
+*basic unit of persistence*. Если вы хотите загрузить или сохранить объекты из базы данных,
+вы должны загружать/сохранять aggregates целиком.
+
+Каждая транзакция базы данных должна работать с **одним**  и не должна включать в себя
+несколько aggregates или пересекать их границы.
+
+Аналогично для сериализации - допустима сериализация только одного aggregate целиком, а не по
+частям.
+
+### Summary of aggregates role
+
+* Aggregate - коллекция domain objects, которые могут быть рассмотрены как single unit,
+с Entity верхнего уровня, действующей как "root".
+* Все изменения объектов внутри aggregate должны быть применены через
+верхний уровень к root. Aggregate действует как согласованный объект, поэтому необходимо убедиться,
+что все данные внутри aggregate обновляются правильно и одновременно.
+* Aggregate - это атомарная единица хранения, транзакции базы данных и передачи данных.
+
+>## More Domain-Driven Design Vocabulary
+>
+>Новые термины:
+>
+>* **Value Object** - domain object без идентификации. Два Value Objects включающие одинаковые
+>данные, рассматриваются как идентичные. Value Objects должны быть неизменяемыми.
+>Примеры Value Objects: имена, адреса, пункты назначения, деньги, даты.
+>
+>* **Entity** - domain object у которого есть идентификация, который сохраняется даже при изменении
+>его свойств/данных. Entity objects обычно имеют ID или key поле. Два Entities с одинаковыми
+>ID/key рассматриваются как один объект. Entities обычно представляют domain objects
+>у которыхесть жизненный цикл и история изменений.
+>Примеры Entities: customers, orders, products, and invoices.
+>
+>* **Aggregate** - коллекция objects, которые могут быть рассмотрены как один компонент для
+>обеспечения согласованности в domain и использованы как атомарная единица при передачи данных.
+>Другие Entities могут только ссылаться на aggregate по его идентификатору, где ID это
+>верхний уровень aggregate (иначе называемого "root").
+
+## Putting It All Together
+
 # Links
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
+
+* [Data-oriented design](https://en.wikipedia.org/wiki/Data-oriented_design)

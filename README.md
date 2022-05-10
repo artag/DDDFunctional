@@ -33,3 +33,5 @@ Alberto Brandolini - создатель метода "Event Storming".
 * [Clean Architecture](https://8thlight.com/blog/uncle-bob/2012/08/13/the-clean-architecture.html)
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
+
+* [Data-oriented design](https://en.wikipedia.org/wiki/Data-oriented_design)
