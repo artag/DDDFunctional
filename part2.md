@@ -757,7 +757,7 @@ type ValidateOrder = UnvalidatedOrder -> ValidatedOrder
 
 ```fsharp
 type PlaceOrderEvents = {
-    AcknowledgmentSent : AcknowledgemntSent
+    AcknowledgmentSent : AcknowledgmentSent
     OrderPlaced : OrderPlaced
     BillableOrderPlaced : BillableOrderPlaced
 }
@@ -1255,6 +1255,19 @@ type Order = {
 >верхний уровень aggregate (иначе называемого "root").
 
 ## Putting It All Together
+
+Пример компилируемого кода, в котором есть описание domain model для бизнес-процесса "Place Order".
+
+[Solution](fs/chapter05/chapter05.sln)
+[Domain](fs/chapter05/OrderTaking/OrderTaking.fs)
+
+Domain описан не весь, но компилируется.
+
+## Wrapping Up
+
+* Изучили как описывать domain при помощи F#. (И никаких типов вида `Manager` и `Handler`!).
+* Ввели термины DDD: "Value Object", "Entity", "Aggregate".
+* Описали типы в F#. Описание близко к документации и его можно скомпилировать.
 
 # Links
 
