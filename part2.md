@@ -1258,8 +1258,7 @@ type Order = {
 
 Пример компилируемого кода, в котором есть описание domain model для бизнес-процесса "Place Order".
 
-[Solution](fs/chapter05/chapter05.sln)
-[Domain](fs/chapter05/OrderTaking/OrderTaking.fs)
+[OrderTaking.fs](fs/chapter05/OrderTaking/OrderTaking.fs)
 
 Domain описан не весь, но компилируется.
 
@@ -1268,6 +1267,136 @@ Domain описан не весь, но компилируется.
 * Изучили как описывать domain при помощи F#. (И никаких типов вида `Manager` и `Handler`!).
 * Ввели термины DDD: "Value Object", "Entity", "Aggregate".
 * Описали типы в F#. Описание близко к документации и его можно скомпилировать.
+
+# Chapter 6. Integrity and Consistency in the Domain. (Целостность и согласованность в домене)
+
+Цель - создать bounded context (ограниченный контекст), который всегда содержит данные,
+которым можно доверять, в отличие от ненадежного внешнего мира.
+
+## The Integrity of Simple Values. (Целостность простых значений)
+
+Т.к. данные в ФП неизменяемы, то, один раз созданные валидные данные больше не потребуется
+проверять.
+
+Как обеспечить валидность данных при их создании:
+
+1. Конструктор `private`.
+2. Использование функции для создания валидных значений. Все неправильные значения эта функция
+игнорирует и возращает ошибку.
+
+>В ФП такой подход называется **smart constructor** (умный конструктор).
+
+Пример:
+
+```fsharp
+type UnitQuantity = private UnitQuantity of int
+//                  ^ private constructor
+
+// define a module with the same name as the type
+module UnitQuantity =
+
+    /// Define a "smart constructor" for UnitQuantity
+    /// int -> Result<UnitQuantity, string>
+    let create qty =
+        if qty < 1 then
+            Error "UnitQuantity can not be negative"            // failure
+        else if qty > 1000 then
+            Error "UnitQuantity can not be more than 1000"      // failure
+        else
+            Ok (UnitQuantity qty)             // success - construct value
+
+    /// Return the wrapped value
+    let value (UnitQuantity qty) = qty
+```
+
+private конструктор не позволяет извлекать внутреннее значение типа при pattern matching.
+Для извлечения внутреннего значения типа вводится вспомогательная функция `value`.
+
+Для облегчения создания простых типов можно использовать вспомогательные модули, наподобие:
+
+[constrainedType.fs](/fs/chapter06/constrainedType.fs)
+
+>### Compatibility with Older Versions of F#
+>
+>Modules with the same name as a non-generic type will cause an error in versions
+>of F# before v4.1 (VS2017), so you’ll need to change the module definition to include
+>a CompilationRepresentation attribute like this:
+> ```fsharp
+> type UnitQuantity = ...
+> [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+> module UnitQuantity =
+> ...
+> ```
+
+Использование:
+
+```fsharp
+// let unitQty = UnitQuantity 1         // Не получится из-за private конструктора
+
+let unitQtyResult = UnitQuantity.create 1
+
+match unitQtyResult with
+| Error msg  ->
+    printfn "Failure, Message is %s" msg
+| Ok uQty ->
+    printfn "Success. Value is %A" uQty
+    let innerValue = UnitQuantity.value uQty
+    printfn "innerValue is %i" innerValue
+```
+
+## Units of Measure. (Единицы измерения)
+
+>Measure types for all the SI units are available in the `Microsoft.FSharp.Data.UnitSystems.SI` namespace.
+
+Использование *units of measure* - еще один способ документирования требований с type-safety.
+
+Использование units of measure **не влияет** на быстродействие.
+
+Units of measure могут быть:
+
+* Физические величины (например, система единиц СИ)
+* Timeouts (секунды, миллисекунды, и т.д.)
+* Spatial dimensions (пространственные размеры) (различия между осями координат)
+* Денежные единицы
+* ...
+
+Пример определения units of measure:
+
+```fsharp
+[<Measure>]
+type kg
+
+[<Measure>]
+type m
+```
+
+Определение значений с аннотациями:
+
+```fsharp
+let fiveKilos = 5.0<kg>
+let fiveMeters = 5.0<m>
+```
+
+Здесь будет ошибка компиляции при попытке неправильного использования этих значений:
+
+```fsharp
+// Error: expecting a float<kg> but given a float<m>
+fiveKilos = fiveMeters
+
+// Error: the unit of measure 'kg' does not match the unit of measure 'm'
+let listOfWeights = [
+    fiveKilos
+    fiveMeters
+]
+```
+
+Для domain в примере units of measure можно использовать например так:
+
+```fsharp
+type KilogramQuantity = KilogramQuantity of decimal<kg>
+```
+
+## Enforcing Invariants with the Type System
 
 # Links
 
