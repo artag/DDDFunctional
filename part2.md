@@ -1396,10 +1396,369 @@ let listOfWeights = [
 type KilogramQuantity = KilogramQuantity of decimal<kg>
 ```
 
-## Enforcing Invariants with the Type System
+## Enforcing (усиление) Invariants with the Type System
+
+*Invariant* (инвариант) - это условие, которое остается верным независимо от того, что происходит.
+
+Пример invariant'а - `UnitQuantity` должно быть всегда равной числу в диапазоне от 1 до 1000.
+
+В примере domain также было определено, что в order должна быть хотя бы одна order line.
+Этот invariant можно выразить при помощи типа `NonEmptyList`:
+
+```fsharp
+type NonEmptyList<'a> = {
+    First: 'a
+    Rest: 'a list
+}
+```
+
+Тип `NonEmptyList` гарантирует что список никогда не будет пустым.
+
+Подобные вспомогательные типы и функции можно найти в сторонних библиотеках, например
+[FSharpx.Collections](https://fsprojects.github.io/FSharpx.Collections/)
+
+Тип `Order` можно перезаписать так:
+
+```fsharp
+type Order = {
+    CustomerInfo : CustomerInfo
+    ShippingAddress : ShippingAddress
+    OrderLines : NonEmptyList<OrderLine>        // Изменение
+    AmountToBill : BillingAmount
+}
+```
+
+## Capturing Business Rules in the Type System
+
+Руководство по проектированию: "Делайте недопустимые состояния системы непредставимыми".
+
+Фиксируем бизнес-правила в системе типов. Если сделать это правильно, недопустимые ситуации
+никогда не смогут существовать в коде, и нам никогда не придется писать для них юнит-тесты.
+Вместо этого у нас будут юнит-тесты "во время компиляции".
+
+### Пример 1
+
+1. Есть customer email, который может быть неподтвержденный и подтвержденный.
+2. Можно слать подтверждающие сообщения только на неподтвержденный email.
+3. Можно слать сброс пароля только на подтвержденный email.
+
+**Плохой** дизайн:
+
+```fsharp
+type CustomerEmail = {
+    EmailAddress : EmailAddress
+    IsVerified : bool
+}
+```
+
+**Рекомендуемый** дизайн:
+
+```fsharp
+type CustomerEmail =
+| Unverified of EmailAddress
+| Verified of VerifiedEmailAddress      // отличается от EmailAddress
+
+type SendVerificationEmail = EmailAddress -> ...
+type SendPasswordResetEmail = VerifiedEmailAddress -> ...
+```
+
+Плюс, для `VerifiedEmailAddress` надо сделать `private` конструктор, чтобы только сервис
+верификации смог создать этот вид email.
+
+### Пример 2
+
+Бизнес-правило: заказчик должен иметь email или почтовый адрес.
+
+**Плохой** дизайн:
+
+```fsharp
+type Contact = {
+    Name : Name
+    Email : EmailContactInfo
+    Address : PostalContactInfo
+}
+```
+
+**Рекомендуемый** дизайн:
+
+```fsharp
+type BothContactMethods = {
+    Email : EmailContactInfo
+    Address : PostalContactInfo
+}
+
+type ContactInfo =
+| EmailOnly of EmailContactInfo
+| AddrOnly of PostalContactInfo
+| EmailAndAddr of BothContactMethods
+
+type Contact = {
+    Name : Name
+    ContactInfo : ContactInfo
+}
+```
+
+### Making Illegal States Unrepresentable in Our Domain
+
+Для domain в примере:
+
+* Есть два почтовых адреса: подтвержденный и нет.
+
+Как надо сделать:
+
+```fsharp
+type UnvalidatedAddress = ...
+type ValidatedAddress = private ...
+```
+
+`ValidatedAddress` может создать только сервис по валидации адресов:
+
+```fsharp
+type AddressValidationService =
+    UnvalidatedAddress -> ValidatedAddress option
+```
+
+Аналогично можно поступить для `Order`:
+
+```fsharp
+type UnvalidatedOrder = {
+    ...
+    ShippingAddress : UnvalidatedAddress
+    ...
+}
+
+type ValidatedOrder = {
+    ...
+    ShippingAddress : ValidatedAddress
+    ...
+}
+```
+
+## Consistency. (Согласованность)
+
+Примеры требований по consistency (согласованности):
+
+* Общая сумма заказа должна быть суммой его строк.
+Если итоговое значение отличается, то данные противоречивы.
+
+* При принятии заказа необходимо создать соответствующий счет. Если
+заказ существует, но счет отсутствует, данные противоречивы.
+
+* Если при заказе используется код ваучера на скидку, код ваучера должен
+быть помечен как использованный, чтобы его нельзя было использовать снова.
+Если ваучер не помечен как использованный, данные противоречивы.
+
+### Замечания
+
+* Consistency - это бизнес-термин, а не технический. В разных контекстах согласованность
+может быть определена по разному.
+
+* Во многих случаях потребность в consistency может быть снижена или отложена.
+
+* Consistency (согласованность) и атомарность persistence связаны друг с другом.
+
+### Consistency Within a Single Aggregate
+
+Раннее было введено понятие aggregate (агрегата). Он действует как граница согласованности,
+так и как единица persistence.
+
+Пример. Требование: общая сумма заказа была суммой отдельных его строк.
+
+Самый простой способ согласованности - просто вычислять информацию из необработанных данных,
+а не хранить ее.
+
+Если надо хранить сумму строк, то нужно убедиться, что она остается синхронизированной: если одна
+из строк обновляется, итоговая сумма также должна быть обновлена.
+
+Единственный компонент, который "знает" как сохранить согласованность - это `Order` (самый
+верхний уровень). Все обновления выполняются на этом, самом верхнем уровне:
+
+```fsharp
+/// We pass in three parameters:
+/// * the top-level order
+/// * the id of the order line we want to change
+/// * the new price
+let changeOrderLinePrice order orderLineId newPrice =
+    // find orderLine using orderLineId
+    let orderLine = order.OrderLines |> findOrderLine orderLineId
+
+    // make a new version of the OrderLine with new price
+    let newOrderLine = {orderLine with Price = newPrice}
+
+    // create new list of lines, replacing old line with new line
+    let newOrderLines =
+        order.OrderLines |> replaceOrderLine orderLineId newOrderLine
+
+    // make a new AmountToBill
+    let newAmountToBill =
+        newOrderLines |> List.sumBy (fun line -> line.Price)
+
+    // make a new version of the order with the new lines
+    let newOrder = {
+        order with
+            OrderLines = newOrderLines
+            AmountToBill = newAmountToBill
+        }
+
+    // return the new order
+    newOrder
+```
+
+Aggregates также являются единицей атомарности, поэтому `Order` должен сохраняться/обновляться
+в БД в рамках одной транзакции.
+
+### Consistency Between Different Contexts
+
+Если нужно координировать действия в разных contexts.
+
+* Требование: при размещении заказа необходимо создать соответствующий счет. Если
+заказ существует, но счет отсутствует, данные противоречивы.
+
+Выставление счета является частью billing domain, а не order-taking domain.
+
+Мы должны поддерживать каждый bounded context изолированным и несвязанным.
+
+Как насчет использования API выставления счетов, например:
+
+```text
+Ask billing context to create invoice
+If successfully created:
+    create order in order-taking context
+```
+
+Этот подход намного сложнее, чем может показаться, потому что вам нужно
+справиться с любым сбоем обновления. Существуют способы правильной синхронизации обновлений между
+отдельными системами (например, two-phase commit), но на практике это
+редко требуется.
+
+В статье ["Starbucks Does Not Use Two-Phase Commit"](http://www.enterpriseintegrationpatterns.com/ramblings/18_starbucks.html)
+утверждается, что в реальном мире бизнес, как правило, не требует, чтобы каждый процесс
+двигался синхронно, ожидая завершения работ все подсистем до перехода к следующему этапу.
+
+#### Асинхронная координация between different contexts
+
+Вместо этого координация осуществляется *асинхронно* с использованием сообщений.
+Иногда что-то идет не так, но затраты на устранение редких ошибок часто намного меньше, чем затраты
+на поддержание всех domains в режиме синхронизации.
+
+Например, предположим, что вместо того, чтобы требовать немедленного создания
+счета, мы просто отправляем сообщение (или событие) billing domain и просто продолжаем дальше
+обрабатывать остальные заказы.
+
+Что делать, если сообщение будет потеряно и счет не будет создан?
+
+1. Ничего не делать. Клиент бесплатно получает свой заказ и бизнес должен списать стоимость.
+Это может быть вполне адекватным решением, если ошибки редки, а затраты невелики (как в кафе).
+
+2. Обнаружение потери сообщения и повторная его отправка. Это делает процесс reconciliation
+(согласования): сравнивает два набора данных, и если они не совпадают, исправляет ошибку.
+
+3. Создание *компенсирующего действия*, которое "отменяет" предыдущее
+действие или исправляет ошибку. В сценарии order-taking это было бы
+эквивалентно отмене заказа и просьбе клиента отправить товары обратно!
+В более реалистичом сценарии, компенсирующее действие может быть использовано для
+выполнения таких действий, как: исправление ошибок в заказе или возврат средств.
+
+Во всех трех случаях нет необходимости в жестких координация между bounded contexts.
+
+Если у нас есть требование к consistency (согласованности), то нам нужно реализовать второй
+или третий вариант. Но согласованность не наступит сразу.
+Вместо этого система станет согласованной только по истечении некоторого времени -
+"eventual consistency" (конечная согласованность/согласованность через некоторое время).
+
+#### Пример
+
+Допустим, если цена продукта изменилась, мы хотим обновить цену для всех заказов,
+которые еще не были отправлены.
+
+Если нам нужна immediate consistency (мгновенная согласованность), то, когда мы обновляем цену
+продукта, мы также должны обновить все остальные заказы с этим товаром и сделать все это
+в рамках одной и той же транзакции. Это может занять некоторое время.
+
+Но если нам не требуется мгновенная согласованность при изменении цены продукта, мы можем
+создать событие `PriceChanged`, которое запускает серию команд `UpdateOrderWithChangedPrice`
+для обновления неоплаченных заказов. Эти команды будут обработаны через некоторое время
+после изменения цены продукта. Возможно, через несколько секунд или несколько часов.
+В конце концов заказы обновятся, и система станет consistent.
+
+### Consistency Between Aggregates in the Same Context
+
+Как насчет consistency между aggregates в одном bounded context? Должны ли мы их обновлять вместе
+одной транзакцией или обновлять их по отдельности, используя eventual consistency?
+
+В целом, рекомендацией является "обновлять только один aggregate в транзакции".
+Если задействовано более одного aggregate, мы должны использовать сообщения и
+eventual consistency, даже если оба aggregates находятся в одном и том же bounded context.
+
+Но иногда, особенно если бизнес—процесс рассматривается как единая транзакция - возможно
+стоит включить в транзакцию все затронутые объекты.
+
+Пример: перевод денег между двумя счетами, когда один счет увеличивается, а другой уменьшается:
+
+```text
+Start transaction
+Add X amount to accountA
+Remove X amount from accountB
+Commit transaction
+```
+
+Если учетные записи представлены `Account` aggregate, то мы будем обновлять два разных aggregate
+в одной и той же транзакции.
+
+Это не обязательно является проблемой, но здесь можно провести рефакторинг, чтобы получить более
+глубокое представление о предметной области. Например, в подобных случаях транзакция часто
+имеет свой собственный идентификатор, что подразумевает, что она сама по себе является объектом
+DDD:
+
+```fsharp
+type MoneyTransfer = {
+    Id : MoneyTransferId
+    ToAccount : AccountId
+    FromAccount : AccountId
+    Amount : Money
+}
+```
+
+После этого изменения `Account`'ы по-прежнему будут существовать, но они больше
+не будут нести прямую ответственность за добавление или удаление денег. Вместо
+этого текущий баланс для `Account` теперь будет рассчитываться путем перебора записей
+`MoneyTransfer`, которые ссылаются на него.
+
+### Multiple Aggregates Acting on the Same Data
+
+Что произойдет, если несколько aggregates будут работать с общими данными?
+Например есть `Account` aggregate и `MoneyTransfer` aggregate, которые одновременно работают
+с балансом на счете, и оба должны гарантировать, что баланс не станет отрицательным.
+
+Во многих случаях constraints (ограничения) могут быть разделены между несколькими aggregates,
+если они моделируются с использованием типов. Например, требование о том, чтобы баланс счета
+никогда не был отрицательным, можно было бы смоделировать с помощью типа `NonNegativeMoney`.
+Если это неприменимо, то можно использовать общие функции валидации. Это одно
+из преимуществ функциональных моделей перед объектно-ориентированными моделями: функции валидации
+не привязаны к какому-либо конкретному объекту и не полагаются на глобальное состояние,
+поэтому их можно легко повторно использовать в разных workflows (бизнес-процессах).
+
+## Wrapping Up
+
+* Научились создавать данные, которым внутри домена можно доверять.
+
+* Комбинация "smart constructors" для простых типов и принципа "making illegal states
+unrepresentable" для сложных типов приводит к самодокументируемому коду и меньшей потребности
+в юнит-тестах.
+
+* Рассмотрели вопрос о поддержании consistent (согласованности) данных в одном и между
+несколькими bounded contexts. Пришли к выводу, что если работа не идет с одним aggregate, то
+надо проектировать в стиле eventual consistency (согласованность через некоторое время), а
+не в стиле immediate consistency (мнгновенная согласованность).
 
 # Links
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
 
 * [Data-oriented design](https://en.wikipedia.org/wiki/Data-oriented_design)
+
+* [FSharpx.Collections](https://fsprojects.github.io/FSharpx.Collections/)
+
+Коллекции вспомогательных функций (сторонняя библиотека для F#).
+
+* [Статья "Starbucks Does Not Use Two-Phase Commit"](http://www.enterpriseintegrationpatterns.com/ramblings/18_starbucks.html)

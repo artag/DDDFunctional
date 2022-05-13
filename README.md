@@ -35,3 +35,9 @@ Alberto Brandolini - создатель метода "Event Storming".
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
 
 * [Data-oriented design](https://en.wikipedia.org/wiki/Data-oriented_design)
+
+* [FSharpx.Collections](https://fsprojects.github.io/FSharpx.Collections/)
+
+Коллекции вспомогательных функций (сторонняя библиотека для F#).
+
+* [Статья "Starbucks Does Not Use Two-Phase Commit"](http://www.enterpriseintegrationpatterns.com/ramblings/18_starbucks.html)
