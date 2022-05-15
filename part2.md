@@ -1751,6 +1751,358 @@ unrepresentable" для сложных типов приводит к самод
 надо проектировать в стиле eventual consistency (согласованность через некоторое время), а
 не в стиле immediate consistency (мнгновенная согласованность).
 
+# Chapter 7. Modeling Workflows as Pipelines
+
+Напоминание. Text-based описание Place Order workflow (бизнес-процесса), приведенного ранее:
+
+```text
+workflow "Place Order" =
+    input: UnvalidatedOrder
+    output: (on success):
+        OrderAcknowledgmentSent
+        AND OrderPlaced (to send to shipping)
+        AND BillableOrderPlaced (to send to billing)
+    output: (on error):
+        ValidationError
+
+    // step 1
+    do ValidateOrder
+    If order is invalid then:
+        return with ValidationError
+
+    // step 2
+    do PriceOrder
+
+    // step 3
+    do AcknowledgeOrder
+
+    // step 4
+    create and return the events
+```
+
+Worflow содержит substeps: `ValidateOrder`, `PriceOrder` и т.д.
+
+Весь workflow (бизнес-процесс) можно представить как pipeline. Последний можно представить
+в виде последовательности меньших pipeline'ов. Каждый из pipeline делает transformation данных.
+Такой стиль программирования иногда называют "transformation-oriented programming".
+
+<img src="images/ch07_to_programming.jpg" alt="Transformation-oriented programming" width=650 >
+
+## Workflow Input
+
+Input для workflow должен быть всегда domain object. (Подразумевается, что input был
+десериализирован из DTO).
+
+В примере это тип `UnvalidatedOrder`:
+
+```fsharp
+type UnvlidatedOrder = {
+    OrderId : string
+    CustomerInfo : UnvalidatedCustomerInfo
+    ShippingAddress : UnvalidatedShippingAddress
+    BillingAddress : UnvalidatedBillingAddress
+    OrderLines : UnvalidatedOrderLine list
+}
+```
+
+### Commands as Input
+
+*В действительности* для workflow input'ом является command. Command должна содержать все, что
+нужно workflow для обработки запроса.
+
+Для order-placing workflow такой коммандой будет `PlaceOrder`. Данные, необходимые для обрабтки
+запроса это `UnvalidatedOrder`.
+
+Возможно для command потребуются другие данные для дополнительной информации:
+who created the command, the timestamp, and other metadata for
+logging and auditing.
+
+В итоге команда может выглядеть как-то так:
+
+```fsharp
+type PlaceOrder = {
+    OrderForm : UnvalidatedOrder
+    Timestamp : DateTime
+    UserId : string
+    // etc
+}
+```
+
+### Sharing Common Structures Using Generics
+
+Каждый workflow начинается со своей command. Каждая command будет содержать данные, необходимые
+для работы.
+
+Но такие данные как `UserId`, `Timestamp` и т.д. могут повторяться для всех commands.
+Необходимо сделать эти поля как shared между commands.
+
+*В ООП* таким решением будет использование базового класса для всех commands.
+
+*В ФП* используется generics:
+
+```fsharp
+type Command<'data> = {
+    Data : 'data
+    Timestamp : DateTime
+    UserId : string
+    // etc
+}
+```
+
+Потом можно создать для определенного workflow соответствующую ему command:
+
+```fsharp
+type PlaceOrder = Command<UnvalidatedOrder>
+```
+
+### Combining Multiple Commands in One Type
+
+В некоторых случаях все commands для bounded context будут отправляться по одному и тому
+же входному каналу (например, в очереди сообщений), поэтому нам нужен способ
+объединить их в одну структуру данных, которая может быть сериализована.
+
+<img src="images/ch07_combining_commands.jpg" alt="Multiple commands in one input channel" width=600 >
+
+Решение очевидно - создать choice type:
+
+```fsharp
+type OrderTakingCommand =
+| Place of PlaceOrder
+| Change of ChangeOrder
+| Cancel of CancelOrder
+```
+
+Этот choice тип будет сопоставлен с DTO и сериализован и десериализован
+на входном канале. Нам просто нужно добавить дополнительный этап обработки комманд на входе
+в bounded context - "routing" или "dispatching":
+
+<img src="images/ch07_dispatch_input.jpg" alt="Routing commands on input" width=600 >
+
+## Modeling an Order as a Set of States
+
+`Order` в workflow можно представить как transitions между различыми states:
+
+<img src="images/ch07_order_as_states.jpg" alt="Order as a Set of States" width=600 >
+
+**Плохой** подход для моделирования `Order` - представление всех его возможных состояний в одном
+месте:
+
+```fsharp
+type Order = {
+    OrderId : OrderId
+    ...
+    IsValidated : bool              // set when validated
+    IsPriced : bool                 // set when priced
+    AmountToBill : decimal option   // also set when priced
+}
+```
+
+Проблемы при таком описании:
+
+* Система явно имеет состояния, обозначенными различными флагами. Но состояния являются неявными
+и требуют большого количества кода для их обрабатки.
+
+* Некоторые состояния имеют данные, которые не требуются для других состояний. Их помещение
+в одно место усложняет дизайн.
+
+* Неясно, какие поля и какие флаги должны изменяться вместе (согласованность данных).
+
+**Рекомендуется** создавать отдельный тип для каждого из состояний.
+
+Эти типы могут быть определены из text-based документации.
+
+Например, domain documentation для `ValidatedOrder`:
+
+```text
+data ValidatedOrder =
+    ValidatedCustomerInfo
+    AND ValidatedShippingAddress
+    AND ValidatedBillingAddress
+    AND list of ValidatedOrderLine
+```
+
+и представление в коде:
+
+```fsharp
+type ValidatedOrder = {
+    OrderId : OrderId
+    CustomerInfo : CustomerInfo
+    ShippingAddress : Address
+    BillingAddress : Address
+    OrderLines : ValidatedOrderLines list
+}
+```
+
+Аналогично для `PricedOrder`:
+
+```fsharp
+type PricedOrder = {
+    OrderId : OrderId
+    CustomerInfo : CustomerInfo
+    ShippingAddress : Address
+    BillingAddress Address
+    OrderLines : PricedOrderLines list    // different from ValidatedOrder
+    AmountToBill : BillingAmount          // different from ValidatedOrder
+}
+```
+
+Верхний уровень `Order`:
+
+```fsharp
+type Order =
+| Unvalidated of UnvalidatedOrder
+| Validated of ValidatedOrder
+| Priced of PricedOrder
+// etc
+```
+
+`Order` объект в любой момент его жизненного цикла. Этот тип можно сохранить в хранилище
+или передать другим contexts.
+
+Примечание: `Quote` не включен в состав `Order`. `Quote` это не состояние `Order`, а
+совершенно другой workflow (бизнес-процесс).
+
+### Adding New State Types as Requirements Change
+
+Плюс от использования отдельных типов для каждого из состояний: новые состояния
+могут быть добавлены без нарушения существующего кода.
+
+Например, можно добавить новое состояние `RefundedOrder` с информацией, необходимой только
+для этого состояния. Это добавление не повлияет на другие состояния `Order`.
+
+## State Machines
+
+В типичной модели document или record могут находиться в одном или нескольких состояниях,
+при этом paths (пути) из одного состояния в другое ("transitions" ("переходы")) запускаются
+commands определенного типа. Это известно как *state machine* (машина состояний/конечный автомат).
+
+<img src="images/ch07_state_machine.jpg" alt="State machine" width=450 >
+
+Примеры некоторых states machines:
+
+* Email адрес может иметь states "Unverified" и "Verified". Можно перейти из состояния "Unverified"
+в "Verified" путем нажатия на ссылку в электронном письме с подтверждением.
+
+<img src="images/ch07_unverified_to_verified.jpg" alt="Email states" width=400 >
+
+* Корзина покупок может иметь states "Empty", "Active" и "Paid". Мы можем перейти из "Empty" state
+в "Active" state, добавив товар в корзину. В "Paid" state можно перейти, оплатив товар.
+
+<img src="images/ch07_empty_to_paid.jpg" alt="Shopping cart states" width=500 >
+
+* Доставка посылок может иметь 3 states: "Undelivered", "Out for Delivery" (готов к доставке),
+и "Delivered". Мы можем перейти из состояния "Undelivered" в "Out for Delivery" state,
+положив посылку в грузовик и т.д.
+
+<img src="images/ch07_undelivered_to_delivered.jpg" alt="Package delivary states" width=500 >
+
+### Why Use State Machines?
+
+Преимущества использования State Machines (машина состояний):
+
+* *Каждый state может иметь разное допустимое поведение.*
+
+  В качестве примера, в корзине покупок, только Active Cart (корзина с выбранным товаром/ами)
+  может быть оплачена, а Paid Cart (оплаченная корзина) уже не может быть изменена.
+  Используя различные типы для каждого состояния, мы можем закодировать безнес-требование
+  (бизнес-логику) непосредственно в сигнатуре функции и использовать компилятор для гарантии,
+  что это правило будет всегда соблюдаться.
+
+* *Все states явным образом документированы.*
+
+  Легко иметь важные states, которые неявные и никогда не документируются.
+  В примере с корзиной покупок "Empty Cart" (пустая корзина) ведет себя по-другому по сравнению с
+  "Active Cart", но это различие редко явно документируется кодом.
+
+* *Это инструмент проектирования, который заставляет думать о всех вариантах, которыке могут возникнуть.*
+
+  Распространенной причиной дизайна является необработка некоторых граничных случаев. State machine
+  заставляет думать обо всех случаях. Например:
+
+  * Что должно произойти, если мы попытаемся подтвердить уже подтвержденный адрес электронной почты?
+  * Что должно произойти, если мы попытаемся удалить элемент из пустой корзины для покупок?
+  * Что должно произойти, если мы попытаемся доставить посылку, которая уже находится в
+  состоянии "Доставлено"?
+
+  И так далее. Размышление о дизайне в терминах состояний может привести к тому, что эти
+  вопросы всплывают на поверхность и проясняют логику предметной области.
+
+### How to Implement Simple State Machines in F#
+
+Как уже было сказано: *крайне не рекомендуется* определять все состояния в одной записи/структуре,
+используя флаги, перечисления или другие виды условной логики.
+
+*Рекомендуется* для каждого state делать отдельный тип, который хранит данные, относящийся к нему
+(если таковые имеются).
+
+Далее, весь набор состояний может быть представлен choice type с case для каждого state.
+
+Пример shopping cart state machine:
+
+```fsharp
+type Item = ...
+type ActiveCartData = { UnpaidItems : Item list }
+type PaidCartData = { PaidItems : Item list; Payment : float }
+
+type ShoppingCart =
+| EmptyCart                         // no data
+| ActiveCart of ActiveCartData
+| PaidCart of PaidCartData
+```
+
+Обработчик command это функция, которая принимает все states (верхний choice type)  и возвращает
+его новую версию.
+
+Например, мы хотим добавить товар в корзину. Функция `addItem` принимает параметр `ShoppingCart`
+и добавляемый элемент:
+
+```fsharp
+let addItem cart item =
+    match cart with
+    | EmptyCart ->
+      // create a new active cart with one item
+      ActiveCart { UnpaidItems = [item] }
+
+    | ActiveCart { UnpaidItems = existingItems } ->
+      // create a new ActiveCart with the item added
+      ActiveCart { UnpaidItems = item :: existingItems }
+
+    | PaidCart _ ->
+      // ignore
+      cart
+```
+
+Результат - новый `ShoppingCart`, который может быть в новом state, или нет.
+
+Или, например, что мы хотим оплатить товары в корзине. Функция `makePayment` принимает параметр
+`ShoppingCart` и информацию о платеже:
+
+```fsharp
+let makePayment cart payment =
+    match cart with
+    | EmptyCart ->
+      // ignore
+      cart
+
+    | ActiveCart { UnpaidItems = existingItems } ->
+      // create a new PaidCart with the payment
+      PaidCart { PaidItems = existingItems; Payment = payment }
+
+    | PaidCart _ ->
+      // ignore
+      cart
+```
+
+Результат - новый `ShoppingCart`, который может быть в "Paid" state, или нет.
+
+С точки зрения клиента набор states рассматривается как единое целое для всех манипуляций
+(тип `ShoppingCart`), но при внутренней обработке событий каждый state обрабатывается отдельно.
+
+ch07_validation_depends.jpg
+ch07_getproductprice_dep.jpg
+ch07_long_workflows.jpg
+ch07_saving_to_storage.jpg
+
 # Links
 
 * [Understanding type inference in F#](https://fsharpforfunandprofit.com/posts/type-inference/)
