@@ -2098,8 +2098,236 @@ let makePayment cart payment =
 С точки зрения клиента набор states рассматривается как единое целое для всех манипуляций
 (тип `ShoppingCart`), но при внутренней обработке событий каждый state обрабатывается отдельно.
 
-ch07_validation_depends.jpg
-ch07_getproductprice_dep.jpg
+## Modeling Each Step in the Workflow with Types
+
+### The Validation Step
+
+Раннее был описан substep "ValidateOrder" в text-based виде:
+
+```text
+supbstep "ValidateOrder" =
+    input: UnvalidatedOrder
+    output: ValidatedOrder OR ValidationError
+    dependencies: CheckProductCodeExists, CheckAddressExists
+```
+
+<img src="images/ch07_validation_depends.jpg" alt="Validate order substep" width=550 >
+
+Зависимости в ФП также описываются как функции. Сигнатура типа функции
+станет "интерфейсом", который нам нужно реализовать позже.
+
+Например, для проверки существования кода продукта требуется функция с такой сигнатурой:
+
+```fsharp
+type CheckProductCodeExists =
+    ProductCode -> bool
+//  ^input         ^output
+```
+
+От второй зависимости (функции) требуется:
+
+1. На входе `UnvalidatedAddress`, на выходе исправленный адрес (если valid), или ошибка валидации,
+если адрес not valid.
+
+2. "Checked address" (выходное значение удаленного сервиса проверки адресов) должен отличаться от
+"Address" domain object. И мы должны конвертировать один в другой.
+
+```fsharp
+type CheckedAddress = CheckedAddress of UnvalidatedAddress
+type AddressValidationError = AddressValidationError of string
+
+type CheckAddressExists =
+    UnvalidatedAddress -> Result<CheckedAddress, AddressValidationError>
+//  ^input                ^output
+```
+
+В итоге шаг `ValidateOrder` можно описать так:
+
+```fsharp
+type ValidateOrder =
+    CheckProductCodeExists
+    -> CheckAddressExists                           // dependency
+    -> UnvalidatedOrder                             // dependency
+    -> Result<ValidatedOrder, ValidationError>      // output
+```
+
+Общее возвращаемое значение будет `Result`, т.к. одна из зависимостей
+(функция `CheckAddressExists`) его возвращает. После функции, которая возвращает `Result`, этот
+тип необходимо передавать до тех пор, пока мы не перейдем к родительской функции (top-level),
+которая сможет его обработать.
+
+>Зависимости идут первыми в параметрах функции, входные типы идут последними.
+>Причина этого: упрощение частичного применения (partial application).
+>Partial application - функциональный эквивалент dependency injection.
+>Partial application будет рассмотрено в следующих главах.
+
+### The Pricing Step
+
+Следующий substep "PriceOrder". Его text-based описание:
+
+```text
+substep "PriceOrder" =
+    input: ValidateOrder
+    output: PricedOrder
+    dependencies: GetProductPrice
+```
+
+<img src="images/ch07_getproductprice_dep.jpg" alt="Price order substep" width=550 >
+
+Зависимость `GetProductPrice` можно определить так:
+
+```fsharp
+type GetProductPrice =
+    ProductCode -> Price
+```
+
+Итоговая функция `PriceOrder` substep будет выглядеть так:
+
+```fsharp
+type PriceOrder =
+    GetProductPrice         // dependency
+    -> ValidatedOrder       // input
+    -> PricedOrder          // output
+```
+
+### The Acknowledge Order Step
+
+На следующем шаге создается письмо с подтверждением и отправляется клиенту.
+
+Письмо с подтверждением представляет HTML строку и адрес email:
+
+```fsharp
+type HtmlString = HtmlString of string
+type OrderAcknowledgment = {
+    EmailAddress : EmailAddress
+    Letter : HtmlString
+}
+```
+
+Допустим, html письмо будет создано на основе какого-то шаблона, основанного на
+информация о клиенте и деталях заказа. Пусть будет какой-то сервис, который будет создавать
+письмо для нас. Сигнатура функции этого сервиса:
+
+```fsharp
+type CreateOrderAcknowledgmentLetter =
+    PricedOrder -> HtmlString
+```
+
+Также, пусть будет какой-то сервис (или API, или еще что-то), которое будет отправлять сообщение.
+Сигнатура функции этого сервиса:
+
+```fsharp
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> unit     // тип unit - плохой выбор
+```
+
+Тип `unit` указывает на side effect (побочный эффект), который производит данная функция.
+
+Но в workflow нам надо вернуть `OrderAcknowledgmentSent`, если подтверждение
+было отправлено. С типом `unit` мы не можем сказать, было ли оно отправлено или нет.
+Так что нам нужно это изменить. Очевидным выбором является возврат `bool`:
+
+```fsharp
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> bool     // тип bool - плохой выбор
+```
+
+Booleans, как правило, являются плохим выбором в дизайне, потому что они
+очень неинформативны. Было бы лучше использовать простой тип `Sent`/`NotSent` вместо `bool`:
+
+```fsharp
+type SendResult = Sent | NotSent
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> SendResult       // тип SendResult - рекомендуется
+```
+
+Или, возможно, нам следует, чтобы сама служба опционально возвращала само событие
+`OrderAcknowledgmentSent`?
+
+```fsharp
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> OrderAcknowledgmentSent option       // плохой выбор
+```
+
+Но, если мы так сделаем, мы создадим связь между нашим доменом и
+сервисом с помощью типа события. Здесь нет правильного ответа, поэтому пока мы будем
+придерживаться подхода `Sent`/`NotSent`. Мы всегда можем изменить это позже.
+
+Итоговый вид функции для "Acknowledge Order Step":
+
+```fsharp
+type OrderAcknowledgmentSent = {        // output type
+    OrderId : OrderId
+    EmailAddress : EmailAddress
+}
+
+type AcknowledgeOrder =
+    CreateAcknowledgmentLetter              // dependency
+    -> SendOrderAcknowledgment              // dependency
+    -> PricedOrder                          // input
+    -> OrderAcknowledgmentSent option       // output
+```
+
+Функция возвращает optional событие, т.к. подтверждение может быть не отправлено.
+
+### Creating the Events to Return
+
+Дополнительно к событию `OrderAcknowledgmentSent` нам нужно создать события
+`OrderPlaced` (для shipping) и `BillableOrderPlaced`  (для billing).
+
+Их легко определить: событие `OrderPlaced` может быть просто псевдонимом для `PricedOrder`,
+а событие `BillableOrderPlaced` - это всего лишь подмножество события `PricedOrder`:
+
+```fsharp
+type OrderPlaced = PricedOrder
+type BillableOrderPlaced = {
+    OrderId : OrderId
+    BillingAddress : Address
+    AmountToBill : BillingAmount
+}
+```
+
+Напоминание:
+
+```fsharp
+type PricedOrder = {
+    OrderId : OrderId
+    CustomerInfo : CustomerInfo
+    ShippingAddress : Address
+    BillingAddress Address
+    OrderLines : PricedOrderLines list    // different from ValidatedOrder
+    AmountToBill : BillingAmount          // different from ValidatedOrder
+}
+```
+
+Весьма вероятно, что со временем будут добавляться в этот workflow будут добавляться новые события.
+
+Для workflow лучше сделать возвращение списка событий, где событие может быть одним из
+`OrderPlaced`, `BillableOrderPlaced` или `OrderAcknowledgmentSent`:
+
+```fsharp
+type PlaceOrderEvent =
+| OrderPlaced of OrderPlaced
+| BillableOrderPlaced of BillableOrderPlaced
+| AcknowledgmentSent of OrderAcknowledgmentSent
+```
+
+И затем на последнем шаге workflow будет выдан список этих событий:
+
+```fsharp
+type CreateEvents =
+    PricedOrder -> PlaceOrderEvent list
+```
+
+Если когда-нибудь понадобится поработать с новым событием, мы можем просто добавить его в
+список, не нарушая рабочий процесс в целом.
+
+И если мы обнаружим, что одни и те же события появляются в нескольких workflow в domain,
+мы можем подняться на уровень выше и создать более общий `OrderTakingDomainEvent` в качестве
+типа всех событий в этом домене.
+
+## Documenting Effects
+
 ch07_long_workflows.jpg
 ch07_saving_to_storage.jpg
 
