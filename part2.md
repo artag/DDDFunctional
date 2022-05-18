@@ -2328,6 +2328,187 @@ type CreateEvents =
 
 ## Documenting Effects
 
+Еще раз проверим, надо ли в сигнатурах функций явно указывать наличие side-effects.
+
+### Effects in the Validation Step
+
+Шаг validation имеет две зависимости: `CheckProductCodeExists` и `CheckAddressExists`.
+
+Для `CheckProductCodeExists` сигнатура функции такая:
+
+```fsharp
+type CheckProductCodeExists = ProductCode -> bool
+```
+
+* Согласно ТЗ (см. ранее) ожидается, что доступна локальная кэшированная
+копия каталога продуктов и что мы можем быстро получить к нему доступ. Поэтому async здесь не нужен.
+
+* Возвращается флаг валидности кода продукта, т.к. больше никаких ошибок при валидации не ожидается.
+
+Для `CheckAddressExists` сигнатура функции такая:
+
+```fsharp
+// alias
+type AsyncResult<'success, 'failure> = Async<Result<'success, 'failure>>
+
+type CheckAddressExists =
+    UnvalidatedAddress -> AsyncResult<CheckedAddress, AddressValidationError>
+```
+
+* Функция `CheckAddressExists` вызывает удаленную службу, поэтому она должна иметь `Async` и
+`Result` эффекты.
+
+* `Async` и `Result` можно объединить в один тип, используя alias (псевдоним) `AsyncResult`.
+
+Как и в случае с `Result`, `Async` эффект "заразен" для любого содержащего его кода.
+Таким образом, изменение `CheckAddressExists` на возвращаемое значение `AsyncResult` означает,
+нам необходимо изменить весь `ValidateOrder`, чтобы он тоже возвращал `AsyncResult`:
+
+```fsharp
+type ValidateOrder =
+    CheckProductCodeExists                                  // dependency
+    -> CheckAddressExists                                   // AsyncResult dependency
+    -> UnvalidatedOrder                                     // input
+    -> AsyncResult<ValidatedOrder, ValidationError list>    // output
+```
+
+### Effects in the Pricing Step
+
+Pricing step имеет только одну зависимость: `GetProductPrice`.
+
+* Каталог продуктов является локальным (например, кэшируется в памяти), поэтому
+здесь нет `Async` эффекта.
+
+* Также нет ошибок доступа к локальному каталогу продуктов - нет `Result` эффекта.
+
+Однако, сам `PriceOrder` вполне может вернуть ошибку. Предположим, что
+товар был оценен неправильно, и поэтому `AmountToBill` (общая сумма счета) очень велика или
+отрицательна. Это то, что надо отобразить в сигнатуре функции:
+
+```fsharp
+type PricingError = PricingError of string
+
+type PriceOrder =
+    GetProductPrice                         // dependency
+    -> ValidateOrder                        // input
+    -> Result<PricedOrder, PricingError>    // output
+```
+
+### Effects in the Acknowledge Step
+
+`AcknowledgeOrder` step имеет две зависимости: `CreateOrderAcknowledgmentLetter`
+и `SendOrderAcknowledgment`.
+
+* Функция `CreateOrderAcknowledgmentLetter` локальнаяи использует шаблон, который кэшируется.
+Она не может вернуть ошибку. Т.о. данная функция не имеет никаких эффектов, которые необходимо
+документировать в сигнатуре типа.
+
+* Функция `SendOrderAcknowledgment` выполняет операции I/O (ввода-вывода), поэтому
+нужен `Async` эффект.
+
+* В функции `SendOrderAcknowledgment` могут быть ошибки при при отправке сообщений.
+Но детали ошибки (и сам факт ошибки) при отправке сообщений нас не волнуют - мы их игнорируем.
+Т.о. выходной тип будет содержать только `Async` эффект:
+
+```fsharp
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> Async<SendResult>
+
+type AcknowledgeOrder =
+    CreateOrderAcknowledgmentLetter             // dependency
+    -> SendOrderAcknowledgment                  // Async dependency
+    -> PricedOrder                              // input
+    -> Async<OrderAcknowledgmentSent option>    // Async output
+```
+
+И конечно, `Async` эффект распространяется до выхода последней функции.
+
+## Composing the Workflow from the Steps
+
+Итак все стадии workflow (показаны только input'ы и output'ы):
+
+```fsharp
+type ValidateOrder =
+    UnvalidatedOrder                                        // input
+    -> AsyncResult<ValidatedOrder, ValidationError list>    // output
+
+type PriceOrder =
+    ValidatedOrder                              // input
+    -> Result<PricedOrder, PricingError>        // output
+
+type AcknowledgeOrder =
+    PricedOrder                                 // input
+    -> Async<OrderAcknowledgmentSent option>    // output
+
+type CreateEvents =
+    PricedOrder             // input
+    -> PlaceOrderEvent      // output
+```
+
+Теперь, чтобы построить весь workflow (бизнес-процесс), надо как-то передавать выходные данные
+из одной стадии (шага) в вход следующей стадии (шага).
+
+Для того, чтобы compose (скомпоновать) эти функции нам придется жонглировать
+типами ввода и вывода, чтобы они были совместимы и могли быть состыкованы друг с другом.
+Об этом будет написано в следующих главах.
+
+## Are Dependencies Part of the Design?
+
+Как было видно выше, стадии (шаги) в workflow для своей работы используют обращения к другим
+contexts. Например:
+
+```fsharp
+type ValidateOrder =
+    CheckProductCodeExists                                  // explicit dependency
+    -> CheckAddressExists                                   // explicit dependency
+    -> UnvalidatedOrder                                     // input
+    -> AsyncResult<ValidatedOrder, ValidationError list>    // output
+
+type PriceOrder =
+    GetProductPrice                         // explicit dependency
+    -> ValidateOrder                        // input
+    -> Result<PricedOrder, PricingError>    // output
+```
+
+Действительно ли нам важно знать с *какими* внешними системами связываются процессы для
+выполнения своей работы. Может эти взаимодействия должны быть скрыты?
+
+Если придерживаться сокрытия внешних зависимостей то сигнатуры функций упростились только
+до входных и выходных данных:
+
+```fsharp
+type ValidateOrder =
+    UnvalidatedOrder                                        // input
+    -> AsyncResult<ValidatedOrder, ValidationError list>    // output
+
+type PriceOrder =
+    ValidatedOrder                              // input
+    -> Result<PricedOrder, PricingError>        // output
+```
+
+Какой подход выбрать, как сделать лучше?
+
+**Рекомендации** следующие:
+
+* Для общедоступных функций (например внешний API), скрывайте информацию о зависимостях.
+* Для функций, используемых внутри domain, следует явно указывать их зависимости.
+
+Следуя рекомендации, в сигнатуре функции верхнего уровня `PlaceOrder` ее зависимости не должны быть
+видны, поскольку вызывающей стороне не нужно знать о их:
+
+```fsharp
+type PlaceOrderWorkflow =
+    PlaceOrder                                              // input
+    -> AsyncResult<PlaceOrderEvent list, PlaceOrderError>   // output
+```
+
+Но для каждого *внутреннего* шага workflow зависимости должны быть указаны явно.
+Это помогает задокументировать, что на самом деле нужно для каждого шага.
+Если зависимости для шага изменяются, то мы можем изменить определение его функции,
+что, в свою очередь, заставит нас изменить реализацию этой функции.
+
+## The Complete Pipeline
+
 ch07_long_workflows.jpg
 ch07_saving_to_storage.jpg
 
