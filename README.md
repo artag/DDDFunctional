@@ -41,3 +41,5 @@ Alberto Brandolini - создатель метода "Event Storming".
 Коллекции вспомогательных функций (сторонняя библиотека для F#).
 
 * [Статья "Starbucks Does Not Use Two-Phase Commit"](http://www.enterpriseintegrationpatterns.com/ramblings/18_starbucks.html)
+
+* [Sagas (Saga pattern)](http://vasters.com/archive/Sagas.html)

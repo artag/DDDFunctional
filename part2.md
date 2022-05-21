@@ -2509,8 +2509,209 @@ type PlaceOrderWorkflow =
 
 ## The Complete Pipeline
 
-ch07_long_workflows.jpg
-ch07_saving_to_storage.jpg
+Напишем типы для public API. Обычно они все располагаются в одном файле, например `DomainApi.fs`
+или еще чем-то подобном.
+
+Inputs:
+
+```fsharp
+// --------------------
+// Input Data
+// --------------------
+
+type UnvalidatedOrder = {
+    OrderId : string
+    CustomerInfo : UnvalidatedCustomer
+    ShippingAddress : UnvalidatedAddress
+}
+and UnvalidatedCustomer = {
+    Name : string
+    Email : string
+}
+and UnvalidatedAddress = ...
+
+// --------------------
+// Input Command
+// --------------------
+
+type Command<'data> = {
+    Data : 'data
+    Timestamp : DateTime
+    UserId : string
+    // etc
+}
+
+type PlaceOrderCommand = Command<UnvalidatedOrder>
+```
+
+Определения типов outputs and workflow:
+
+```fsharp
+// --------------------
+// Public API
+// --------------------
+
+/// Success output of PlaceOrder workflow
+type OrderPlaced = ...
+type BillableOrderPlaced = ...
+type OrderAcknowledgmentSent = ...
+
+type PlacedOrderEvent =
+    | OrderPlaced of OrderPlaced
+    | BillableOrderPlaced of BillableOrderPlaced
+    | AcknowledgmentSent of OrderAcknowledgmentSent
+
+/// Failure output of PlaceOrder workflow
+type PlaceOrderError = ...
+
+type PlaceOrderWorkflow =
+    PlaceOrderCommand                                       // input command
+    -> AsyncResult<PlaceOrderEvent list, PlaceOrderError>   // output events
+```
+
+### The Internal Steps
+
+Типы, используемые внутренними substeps (стадиями, шагами) располагаются в отдельном файле
+вида `PlaceOrderWorkflow.fs`.
+
+Начнем с order life cycle:
+
+```fsharp
+// bring in the type from the domain API module
+open DomainApi
+
+// --------------------
+// Order life cycle
+// --------------------
+
+// validated state
+type ValidatedOrderLine = ...
+type ValidatedOrder = {
+    OrderId : OrderId
+    CustomerInfo : CustomerInfo
+    ShippingAddress : Address
+    BillingAdress : Address
+    OrderLines : ValidatedOrderLine list
+}
+and OrderId = Undefined
+and CustomerInfo = ...
+and Address = ...
+
+// priced state
+type PricedOrderLine = ...
+type PricedOrder = ...
+
+// all states combined
+type Order =
+    | Unvalidated of UnvalidatedOrder
+    | Validated of ValidatedOrder
+    | Priced of PricedOrder
+    // etc
+```
+
+Затем мы можем добавить описание для каждого внутреннего substep'а (стадии, шага):
+
+```fsharp
+// --------------------
+// Definitions of Internal Steps
+// --------------------
+
+// ----- Validate order -----
+
+// services used by ValidateOrder
+type CheckProductCodeExists =
+    ProductCode -> bool
+
+type AddressValidatedError = ...
+type CheckedAddress = ...
+type CheckAddressExists =
+    UnvalidatedAddress
+    -> AsyncResult<CheckedAddress, AddressValidationError>
+
+type ValidateOrder =
+    CheckProductCodeExists          // dependency
+    -> CheckAddressExists           // dependency
+    -> UnvalidatedOrder             // input
+    -> AsyncResult<ValidatedOrder, ValidationError list>        // output
+and ValidationError = ...
+
+// ----- Price order -----
+
+// services used by PriceOrder
+type GetProductPrice =
+    ProductCode -> Price
+
+type PricingError = ...
+
+type PriceOrder =
+    GetProductPrice         // dependency
+    -> ValidatedOrder       // input
+    -> Result<PricedOrder, PricingError>        // output
+
+// etc
+```
+
+Когда есть описания всех типов, можно приступить к их реализации.
+
+## Long-Running Workflows
+
+Стоит обратить внимание на следующую важную деталь - ожидаемое время работы pipeline.
+Ожидание: даже при наличии вызовов к удаленным системам работа pipeline завершится
+в течение короткого времени, порядка секунд.
+
+Но что произойдет, если взаимодействие со внешними службами займет гораздо больше времени?
+Как этот факт повлияет на дизайн?
+
+Во-первых, нам нужно было бы сохранять state (состояние) в storage перед вызовом удаленной
+службы, затем мы бы дожидались сообщения о завершении работы службы. После
+нам пришлось бы загрузить state из storage и перейти к следующему шагу в workflow.
+Это намного сложнее, чем использование обычных асинхронных вызовов,
+потому что нужно сохранять state между каждым шагом.
+
+<img src="images/ch07_long_workflows.jpg" alt="Saving state in long-running workflow" width=600 >
+
+Сделав это, мы разбили исходный workflow на более мелкие независимые фрагменты,
+каждый из которых triggered by an event. Вместо одного workflow получается серия отдельных
+mini-workflows.
+
+Именно здесь state machine (модель конечного автомата) очень хорошо проявляет себя.
+Перед каждым шагом order загружается из storage, будучи сохраненным в каком-то state (состоянии).
+Mini-workflow переводит order в новый state, которое снова сохраняется обратно в storage.
+
+<img src="images/ch07_saving_to_storage.jpg" alt="Saving state to storage" width=450 >
+
+Такие длительные workflows иногда называют [Sagas](http://vasters.com/archive/Sagas.html)
+Они часто применяются в областях, где задействованы медленные люди. Но их также можно использовать
+всякий раз, когда вы хотите разбить workflow на несвязанные, автономные части, связанные событиями
+(... микросервисы).
+
+В нашем примере workflow очень прост. Если количество events (событий) и states (состояний)
+увеличивается, а transitions (переходы) усложняются, то может потребоваться создать
+специальный компонент - *Process Manager* (диспетчер процессов). Он отвечает за обработку
+входящих сообщений, определение того, какие действия следует предпринять на основе
+текущего состояния, а затем запуск соответствующего workflow.
+
+## Wrapping Up
+
+В этой главе было:
+
+* Моделирование workflow, используя только types.
+* Документирование inputs (входных данных) для workflow.
+* Моделирование commands (команды).
+* Использование state machines (конечные автоматы) для моделирования документов и других объектов
+с life cycles (жизненными циклами).
+* Моделирование каждого substep (шага) в workflow с использованием типов для описания
+input, output и внешних зависимостей.
+
+Для описываемого примера было создано достаточно много типов (около 30). Так ли это необходимо?
+Не слишком ли много типов?
+
+Ответ: если бы мы не создавали эти типы, нам все равно пришлось бы документировать/учитывать
+разницу между, например, validated order и priced order.
+
+Конечно, всегда нужно соблюдать баланс. Если для наших потребностей использование такого количества
+типов излишене, то не надо бояться уменьшать их количество. Надо делать то, что служит
+предметной области и наиболее полезно для выполнения поставленной задачи.
 
 # Links
 
@@ -2523,3 +2724,5 @@ ch07_saving_to_storage.jpg
 Коллекции вспомогательных функций (сторонняя библиотека для F#).
 
 * [Статья "Starbucks Does Not Use Two-Phase Commit"](http://www.enterpriseintegrationpatterns.com/ramblings/18_starbucks.html)
+
+* [Sagas (Saga pattern)](http://vasters.com/archive/Sagas.html)
