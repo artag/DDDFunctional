@@ -6,6 +6,8 @@
 
 * [Part 2. Modeling the Domain](part2.md)
 
+* [Part 3. Implementing the Model](part3.md)
+
 ## Links
 
 * [EventStorming book by Alberto Brandolini](http://eventstorming.com)
