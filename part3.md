@@ -371,3 +371,220 @@ let printOption x =
 * знакомство с основными концепциями функционального программирования в F#
 * использование функций в качестве строительных блоков
 * проектирование функций таким образом, чтобы они были составными.
+
+# Chapter 9. Implementation: Composing a Pipeline
+
+Напоминание. Stages в проектируемом pipeline:
+
+* Начать с `UnvalidatedOrder`, конвертировать его в `ValidatedOrder`. В случае ошибки валидации
+возратить ошибку.
+* `ValidatedOrder` конвертировать в `PricedOrder`.
+* Из `PricedOrder` создать acknowledgment письмо и послать его.
+* Создать набор events (событий) и вернуть их.
+
+Итоговая функция для workflow будет выглядеть примерно так:
+
+```fsharp
+let placeOrder unvalidatedOrder =
+    unvalidatedOrder
+    |> validatedOrder
+    |> priceOrder
+    |> acknowledgeOrder
+    |> createEvents
+```
+
+Шаги разработки:
+
+1. Реализация каждого шага workflow в виде отдельной функции. Каждая из функций должна быть
+stateless, без side effects.
+
+2. Compose (составление/компоновка/комбинирование) функций.
+
+Со вторым шагом могут возникнуть некоторые сложности - некоторые из функций не могут быть
+compose (составлены/скомбинированы) из-за:
+
+* Функции с дополнительными параметрами, которые не являются частью data pipeline,
+но необходимы для реализации - "зависимости".
+
+* Функции с явным описанием "эффектов", таких как `Result`, `Async`. Они не могут быть compose
+(скомбинированы) с функциями, которые ожидают обычные данные на входе.
+
+В этой главе будет реализован шаг 1. В следующей главе шаг 2.
+Вначале, для упрощения, будут созданы функции без "эффектов" - без использования `Result`, `Async`
+и т.п.
+
+## Working with Simple Types
+
+Сначала определяются simple types (простые типы), такие как `OrderId` и `ProductCode`.
+
+У каждого simple type должно быть минимум по 2 фунции:
+
+* Функция `create` - smart constructor (умный конструктор), который создает тип с проверкой
+входного значения. Если проверка не проходит, то возвращает ошибку.
+
+* Функция `value`. Извлекает внутреннее значение.
+
+Обычно определение simple type и его функции лежат в одном файле.
+
+Пример определения `OrderId` в модуле `Domain`:
+
+```fsharp
+module Domain =
+    type OrderId = private OrderId of string
+
+    module OrderId =
+        /// Define a "Smart constructor" for OrderId
+        /// string -> OrderId
+        let create str =
+            if String.IsNullOrEmpty(str) then
+                // use exceptions rather than Result for now
+                failwith "OrderId must not be null or empty"
+            elif str.Length > 50 then
+                failwith "OrderId must not be more than 50 chars"
+            else
+                OrderId str
+
+        /// Extract the inner value from an OrderId
+        /// OrderId -> string
+        let value (OrderId str) =       // unwrap in the parameter
+            str                         // return the inner value
+
+```
+
+*Замечания*:
+
+* В умном конструкторе при ошибке валидации используется выброс исключений. Это временно и сделано
+для упрощения проектирования. Потом будет заменено на возврат `Result`.
+* Функция `value` демонстрирует, как можно сделать pattern-matching и извлечь
+внутреннее значение за один шаг, непосредственно в параметре.
+
+## Using Function Types to Guide the Implementation
+
+Определение функции обычным способом:
+
+```fsharp
+let validateOrder
+    checkProductCodeExists          // dependency
+    checkAddressExists              // dependency
+    unvalidatedOrder =              // input
+    ...
+```
+
+Определение функции в определенной сигнатуре (предопределенный тип):
+
+```fsharp
+// define a function signature
+type MyFunctionSignature = Param1 -> Param2 -> Result
+
+// define a function that implements that signature
+let myFunc : MyFunctionSignature =
+    fun param1 param2 ->
+        // ...
+```
+
+Определение функции `validateOrder` будет выглядеть так:
+
+```fsharp
+let validateOrder : ValidateOrder =
+    fun checkProductCodeExists checkAddressExists unvalidatedOrder ->
+     // ^dependency            ^dependency        ^input
+```
+
+Применение такого подхода позволяет локализовать ошибку реализации функции в ее пределах,
+а не на этапе компоновки всех функций.
+
+Компилятор всегда пытается вывести тип входных и выходных параметров функции из контекста их
+использования. Но при таком походе, все параметры и возвращаемое значение функции имеют заранее
+заданные типы. Поэтому, если будет сделана ошибка в реализации функции, то она будет сразу видна
+как локальная ошибка внутри определения функции.
+
+При обычном определении функции подобного рода ошибки обычно появляются на этапе
+компоновки нескольких функций.
+
+## Implementing the Validation Step
+
+Реализация validation (проверочного) step.
+
+На вход поступает unvalidated order с полями-примитивами, который преобразуется в правильный,
+полностью проверенный объект domain (домена).
+
+Описание функций:
+
+```fsharp
+type CheckProductCodeExists =
+    ProductCode -> bool
+
+type CheckAddressExists =
+    UnvalidatedAddress -> AsyncResult<CheckedAddress, AddressValidationError>
+
+type ValidateOrder =
+    CheckProductCodeExists                                      // dependency
+        -> CheckAddressExists                                   // AsyncResult dependency
+        -> UnvalidatedOrder                                     // input
+        -> AsyncResult<ValidatedOrder, ValidationError list>    // output
+```
+
+Как говорилось выше, вначале, для упрощения, будут созданы функции без "эффектов" - без
+использования `Result`, `Async` и т.п.
+
+Поэтому на данном этапе вместо эффектов в случае ошибки будет кидаться исключение (потом, на
+следующих этапах, все будет сделано как надо):
+
+```fsharp
+type CheckProductCodeExists =
+    ProductCode -> bool
+
+type CheckAddressExists =
+    UnvalidatedAddress -> CheckedAddress
+
+type ValidateOrder =
+    CheckProductCodeExists      // dependency
+        -> CheckAddressExists   // dependency
+        -> UnvalidatedOrder     // input
+        -> ValidatedOrder       // output
+```
+
+Пример описания типов, которые требуются для реализации validation step:
+
+* Файл [SimpleTypes.fs](fs/chapter09/OrderTaking/SimpleTypes.fs). Описание simple types
+(простых типов) данных. Сделаны по алгоритму, описанному выше, в разделе
+"Working with Simple Types".
+
+  * `NonEmptyString`
+  * `String10`
+  * `String50`
+  * `EmailAddress`
+  * `ZipCode`
+  * `OrderId`
+  * `OrderLineId`
+  * `ProductCode`, состоит ("OR") из `WidgetCode` и `GizmoCode`
+  * `OrderQuantity`, состоит ("OR") из `UnitQuantity` и `KilogramQuantity`
+
+* Файл [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs). Описание типов данных, доступных
+"снаружи" domain.
+
+  * `UnvalidatedAddress`
+  * `UnvalidatedCustomerInfo`
+  * `UnvalidatedOrderLine`
+  * `UnvalidatedOrder`
+
+* Файл [CompoundTypes.fs](fs/chapter09/OrderTaking/CompoundTypes.fs). Описание составных типов данных.
+
+  * `PersonalName`
+  * `CustomerInfo`
+  * `Address`
+
+* Файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs). Описание validation step, функций
+и типов данных, необходимых для его реализации.
+
+  Данные:
+
+  * `CheckedAddress`
+  * `ValidatedOrderLine`
+  * `ValidatedOrder`
+
+  Функции:
+
+  * `CheckProductCodeExists`
+  * `CheckAddressExists`
+  * `ValidateOrders`

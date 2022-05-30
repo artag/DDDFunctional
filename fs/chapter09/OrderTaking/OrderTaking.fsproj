@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SimpleTypes.fs" />
+    <Compile Include="PublicTypes.fs" />
+    <Compile Include="CompoundTypes.fs" />
+    <Compile Include="PlaceOrder.fs" />
+  </ItemGroup>
+</Project>
