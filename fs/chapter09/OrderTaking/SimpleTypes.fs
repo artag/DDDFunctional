@@ -3,6 +3,9 @@
 open System
 open System.Text.RegularExpressions
 
+/// Temporary, undefined type. Using only on development stage.
+type Undefined = exn
+
 /// Not null or empty string.
 type NonEmptyString = private NonEmptyString of string
 
@@ -49,10 +52,12 @@ type OrderQuantity =
 module NonEmptyString =
 
     /// Return the value inside a NotEmptyString.
+    // ... NonEmptyString -> string
     let value (NonEmptyString str) = str
 
     /// Validate input string.
     /// Throw Exception if string is null or empty.
+    // ... string -> string
     let validate str =
         if String.IsNullOrEmpty(str) then
             failwith "String must not be null or empty"
@@ -61,6 +66,7 @@ module NonEmptyString =
 
     /// Create an NonEmptyString from a string.
     /// Throw Exception if string is null or empty.
+    // ... string -> NonEmptyString
     let create str =
         validate str
         |> NonEmptyString
@@ -69,7 +75,8 @@ module String =
 
     /// Validate input string.
     /// Throw Exception if string length > 50.
-    let validate maximumLength (NonEmptyString str) =
+    // ... int -> NonEmptyString -> string
+    let validateLength maximumLength (NonEmptyString str) =
         if str.Length > maximumLength then
             let msg = sprintf "String must not be more than %i chars" maximumLength
             failwith msg
@@ -82,12 +89,17 @@ module String10 =
     let maximumLength = 10
 
     /// Return the value inside a String10.
+    // ... String10 -> string
     let value (String10 str) = str
 
     /// Validate input string.
     /// Throw Exception if string length > 10.
-    let validate = String.validate maximumLength
+    // ... NonEmptyString -> string
+    let validate = String.validateLength maximumLength
 
+    /// Create an String10 from a string.
+    /// Throw Exception if input is null, empty, or length > 10.
+    // ... string -> String10
     let create str =
         NonEmptyString.create str
         |> validate
@@ -99,18 +111,32 @@ module String50 =
     let maximumLength = 50
 
     /// Return the value inside a String50.
+    // ... Sting50 -> string
     let value (String50 str) = str
 
     /// Validate input string.
     /// Throw Exception if string length > 50.
-    let validate = String.validate maximumLength
+    // ... NonEmptyString -> string
+    let validate = String.validateLength maximumLength
 
     /// Create an String50 from a string.
     /// Throw Exception if input is null, empty, or length > 50.
+    // ... string -> String50
     let create str =
         NonEmptyString.create str
         |> validate
         |> String50
+
+    /// Create an optional String50 from a string.
+    /// Return None if input is null, empty.
+    /// Return Some if the input is valid
+    /// Throw Exception if string length > 50.
+    // ... string -> String50 option
+    let createOption str =
+        if String.IsNullOrEmpty str then
+            None
+        else
+            Some (create str)
 
 module EmailAddress =
 
@@ -119,6 +145,7 @@ module EmailAddress =
 
     /// Create an EmailAddress from a non empty string.
     /// Throw Exception if input doesn't have an "@" in it
+    // ... NonEmptyString -> string
     let validate (NonEmptyString str) =
         let pattern = ".+@.+"   // anything separated by an "@"
         if Regex.IsMatch(str, pattern) then
@@ -128,6 +155,7 @@ module EmailAddress =
 
     /// Create an EmailAddress from a string.
     /// Return Exception if input is null, empty, or doesn't have an "@" in it
+    // ... string -> EmailAddress
     let create str =
         NonEmptyString.create str
         |> validate
@@ -136,11 +164,13 @@ module EmailAddress =
 module ZipCode =
 
     /// Return the string value inside a ZipCode.
+    // ... ZipCode -> string
     let value (ZipCode str) =
         str
 
     /// Validate the input.
     /// Throw Excepion if input not match the pattern.
+    // ... NonEmptyString -> string
     let validate (NonEmptyString str) =
         let pattern = "\d{5}"
         if Regex.IsMatch(str, pattern) then
@@ -150,6 +180,7 @@ module ZipCode =
 
     /// Create a Zipcode from a string.
     /// Throw Exception if input is null, empty, or not match the pattern.
+    // ... string -> ZipCode
     let create str =
         NonEmptyString.create str
         |> validate
@@ -161,14 +192,17 @@ module OrderId =
     let maximumLength = 10
 
     /// Return thestring value inside an OrderId.
+    // ... OrderId -> string
     let value (OrderId str) = str
 
     /// Validate the string input.
     /// Throw Exception if input string length > 10.
+    // ... NonEmptyString -> string
     let validate = String10.validate
 
     /// Create an OrderLineId from a string.
     /// Throw Exception if input is null, empty, or length > 10.
+    // ... string -> OrderId
     let create str =
         NonEmptyString.create str
         |> validate
@@ -180,14 +214,17 @@ module OrderLineId =
     let maximumLength = 10
 
     /// Return thestring value inside an OrderId.
+    // ... OrderLineId -> string
     let value (OrderLineId str) = str
 
     /// Validate the string input.
     /// Throw Exception if input string length > 10.
+    // ... NonEmptyString -> string
     let validate = String10.validate
 
     /// Create an OrderLineId from a string.
     /// Throw Exception if input is null, empty, or length > 10.
+    // ... string -> OrderLineId
     let create str =
         NonEmptyString.create str
         |> validate
@@ -196,10 +233,12 @@ module OrderLineId =
 module WidgetCode =
 
     /// Return the string value inside a WidgetCode.
+    // ... WidgetCode -> string
     let value (WidgetCode code) = code
 
     /// Validate the input.
     /// Throw Exception if input is not match the pattern.
+    // ... NonEmptyString -> string
     let validate (NonEmptyString str) =
         let pattern = "W\d{4}"
         if Regex.IsMatch(str, pattern) then
@@ -209,6 +248,7 @@ module WidgetCode =
 
     /// Create a WidgetCode from a string.
     /// Throw Exception if input is null, empty, or not match the pattern.
+    // ... string -> WidgetCode
     let create str =
         NonEmptyString.create str
         |> validate
@@ -217,10 +257,12 @@ module WidgetCode =
 module GizmoCode =
 
     /// Return the string value inside a GizmoCode.
+    // ... GizmoCode -> string
     let value (GizmoCode code) = code
 
     /// Validate the input.
     /// Throw Exception if input is not match the pattern.
+    // ... NonEmptyString -> string
     let validate (NonEmptyString str) =
         let pattern = "G\d{3}"
         if Regex.IsMatch(str, pattern) then
@@ -230,6 +272,7 @@ module GizmoCode =
 
     /// Create a GizmoCode from a string.
     /// Throw Exception if input is null, empty, or not matching pattern.
+    // ... string -> GizmoCode
     let create str =
         NonEmptyString.create str
         |> validate
@@ -238,12 +281,14 @@ module GizmoCode =
 module ProductCode =
 
     /// Return the string value inside a WidgetCode.
+    // ... ProductCode -> string
     let value = function
         | Widget (WidgetCode wc) -> wc
         | Gizmo (GizmoCode gc) -> gc
 
     /// Create a ProductCode from a string.
     /// Throw Exception if input is null, empty, or not matching pattern.
+    // ... string -> ProductCode
     let create str =
         let code = NonEmptyString.validate str
         if code.StartsWith("W") then
@@ -266,10 +311,12 @@ module UnitQuantity =
     let maximum = 1000
 
     /// Return the value inside a UnitQuantity.
+    // ... UnitQuantity -> int
     let value (UnitQuantity qty) = qty
 
     /// Validate an integer input.
     /// Throw Exception if input is not an integer between 1 and 1000.
+    // ... int -> int
     let validate qty =
         if minimum <= qty && qty <= maximum then
             qty
@@ -279,6 +326,7 @@ module UnitQuantity =
 
     /// Create a UnitQuantity from a int.
     /// Throw Exception if input is not an integer between 1 and 1000.
+    // ... int -> UnitQuantity
     let create qty =
         validate qty
         |> UnitQuantity
@@ -292,10 +340,12 @@ module KilogramQuantity =
     let maximum = 100M
 
     /// Return the value inside a KilogramQuantity.
+    // ... KilogramQuantity -> decimal
     let value (KilogramQuantity qty) = qty
 
     /// Validate a decimal input.
     /// Throw Exception if input is not a decimal between 0.05 and 100.00.
+    // ... decimal -> decimal
     let validate qty =
         if minimum <= qty && qty <= maximum then
             qty
@@ -305,6 +355,7 @@ module KilogramQuantity =
 
     /// Create a KilogramQuantity from a decimal.
     /// Throw Exception if input is not a decimal between 0.05 and 100.00.
+    // ... decimal -> KilogramQuantity
     let create qty =
         validate qty
         |> KilogramQuantity
@@ -312,6 +363,7 @@ module KilogramQuantity =
 module OrderQuantity =
 
     /// Return the value inside a OrderQuantity.
+    // ... OrderQuantity -> decimal
     let value = function
         | Unit uq ->
             uq
@@ -320,3 +372,18 @@ module OrderQuantity =
         | Kilogram kg ->
             kg
             |> KilogramQuantity.value
+
+    /// Create order quantity from a decimal.
+    /// Throw Exception if input is not a decimal between minimum and maximum.
+    // ... ProductCode -> decimal -> OrderQuantity
+    let create productCode quantity =
+        match productCode with
+        | Widget _ ->
+            quantity                    // ... decimal
+            |> int                      // convert decimal to int
+            |> UnitQuantity.create      // to UnitQuantity
+            |> Unit                     // lift to OrderQuantity type
+        | Gizmo _ ->
+            quantity                    // ... decimal
+            |> KilogramQuantity.create  // to KilogramQuantity
+            |> Kilogram                 // lift to OrderQuantity type
