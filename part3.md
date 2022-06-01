@@ -448,7 +448,19 @@ module Domain =
         /// OrderId -> string
         let value (OrderId str) =       // unwrap in the parameter
             str                         // return the inner value
+```
 
+Дополнительно, еще может быть `createOption`. Например, если входная строка `null` или пустая,
+то возвратится значение `None`, иначе - `Some(String50)`:
+
+```fsharp
+let create str =            // string -> String50
+
+let createOption str =      // string -> option<String50>
+    if String.IsNullOrEmpty str then
+        None
+    else
+        Some (create str)
 ```
 
 *Замечания*:
@@ -588,3 +600,234 @@ type ValidateOrder =
   * `CheckProductCodeExists`
   * `CheckAddressExists`
   * `ValidateOrders`
+
+Главная функция для этой стадии может выглядеть так:
+
+```fsharp
+let validateOrder : ValidateOrder =
+    fun checkProductCodeExists checkAddressExists unvalidatedOrder ->
+
+        let orderId =
+            unvalidatedOrder.OrderId
+            |> OrderId.create
+
+        let customerInfo =
+            unvalidatedOrder.CustomerInfo
+            |> toCustomerInfo                   // helper function #1
+
+        let shippingAddress =
+            unvalidatedOrder.ShippingAddress
+            |> toAddress checkAddressExists     // helper function #2
+
+        // convert each line using 'toValidatedOrderLine'
+        let orderLines =
+            unvalidatedOrder.Lines
+            |> List.map (toValidatedOrderLine checkProductCodeExists)  // helper function #3
+
+        // and so on, for each property of the unvalidatedOrder
+        // when all the fields are ready, use them to
+        // create and return a new "ValidatedOrder" record
+        {
+            OrderId = orderId
+            CustomerInfo = customerInfo
+            ShippingAddress = shippingAddress
+            BillingAddress = ...
+            Lines = ...
+        }
+```
+
+### Реализация helper functions
+
+Чтобы начать реализовывать validation step, необходимо создать domain types из non-domain types.
+
+Для преобразования любых non-domain types в domain types надо реализовать helper functions
+(вспомогательные функции).
+
+Нужны следующие и подобные функции:
+
+```text
+UnvalidatedCustomerInfo -> CustomerInfo         // toCustomerInfo
+UnvalidatedAddress -> Address                   // toAddress
+UnvalidatedOrderLine -> ValidatedOrderLine
+и т.д.
+```
+
+### Реализация `toCustomerInfo`. (Helper function #1)
+
+Преобразование `UnvalidatedCustomerInfo` в `CustomerInfo`.
+
+См. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... UnvalidatedCustomerInfo -> CustomerInfo
+let toCustomerInfo (customer : UnvalidatedCustomerInfo) : CustomerInfo =
+    let firstName = customer.FirstName |> String50.create
+    let lastName = customer.LastName |> String50.create
+    let emailAddress = customer.EmailAddress |> EmailAddress.create
+
+    // create a PersonalName
+    let name = {
+        FirstName = firstName           // ... String50
+        LastName = lastName             // ... String50
+    }
+
+    // create a CustomerInfo
+    let customerInfo = {
+        Name = name                     // ... PersonalName
+        EmailAddress = emailAddress     // ... EmailAddress
+    }
+
+    customerInfo
+```
+
+### Creating a Valid, Checked Address. (Helper function #2)
+
+См. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+`CheckedAddress` содержит только значения `string`, так же как и `UnvalidatedAddress`
+
+```fsharp
+type CheckedAddress = CheckedAddress of UnvalidatedAddress
+
+// ... CheckAddressExists -> UnvalidatedAddress -> Address
+let toAddress (checkAddressExists : CheckAddressExists) unvalidatedAddress =
+    // call the remote service
+    let checkedAddress = checkAddressExists unvalidatedAddress
+    // extract the inner value using pattern matching
+    let (CheckedAddress inner) = checkedAddress       // inner - UnvalidatedAddress
+
+    // все значения в inner это string
+    let addressLine1 = inner.AddressLine1 |> String50.create
+    let addressLine2 = inner.AddressLine2 |> String50.createOption
+    let addressLine3 = inner.AddressLine3 |> String50.createOption
+    let addressLine4 = inner.AddressLine4 |> String50.createOption
+    let city = inner.City |> String50.create
+    let zipCode = inner.ZipCode |> ZipCode.create
+
+    // create the Address
+    let address = {
+        AddressLine1 = addressLine1     // ... String50
+        AddressLine2 = addressLine2     // ... String50 option
+        AddressLine3 = addressLine3     // ... String50 option
+        AddressLine4 = addressLine4     // ... String50 option
+        City = city                     // ... String50
+        ZipCode = zipCode               // ... ZipCode
+    }
+
+    address     // ... Address
+```
+
+### Creating the Order Lines. (Helper function #3)
+
+Преобразование `UnvalidatedOrderLine` в `ValidatedOrderLine`
+
+См. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... CheckProductCodeExists -> UnvalidatedOrderLine -> ValidatedOrderLine
+let toValidatedOrderLine checkProductCodeExists
+    (unvalidatedOrderLine : UnvalidatedOrderLine) =
+    let orderLineId =
+        unvalidatedOrderLine.OrderLineId            //...string
+        |> OrderLineId.create                       //...OrderLineId
+    let productCode =
+        unvalidatedOrderLine.ProductCode            //...string
+        |> toProductCode checkProductCodeExists     //...ProductCode
+    let quantity =
+        unvalidatedOrderLine.Quantity               //...decimal
+        |> OrderQuantity.create productCode         //...OrderQuantity
+    let validatedOrderLine = {
+        OrderLineId = orderLineId
+        ProductCode = productCode
+        Quantity = quantity
+    }
+    validatedOrderLine          // ... ValidatedOrderLine
+```
+
+Где `toProductCode` это helper function.
+
+#### Первый поход к описанию функции `toProductCode`
+
+`CheckProductCodeExists` - это внешний сервис, проверяющий существование `ProductCode`. Его
+сигнатура:
+
+```fsharp
+type CheckProductCodeExists =
+    ProductCode -> bool
+```
+
+Таким образом, получится функция:
+
+```fsharp
+// ... CheckProductCodeExists -> string -> bool
+let toProductCode (checkProductCodeExists : CheckProductCodeExists) productCode =
+    productCode                 // ... string
+    |> ProductCode.create       // ... ProductCode
+    |> checkProductCodeExists   // ... bool
+```
+
+Но на выходе этой функции `bool`, а нам требуется `ProductCode`. Для преобразования
+данных можно использовать **Function Adapter**.
+
+### Creating Function Adapters
+
+"Adapter" function - принимает исходную функцию на вход и выдает новую функцию с нужной
+"shape" (формой) данных.
+
+Подобного рода функции также называются "function transformer".
+
+<img src="images/ch09_function_adapter.jpg" alt="Function Adapters" width=600 >
+
+Для нашего случая можно написать такую функцию:
+
+```fsharp
+// ... ('a -> bool) -> 'a -> 'a
+let predicateToPassthru checkProductCodeExists productCode =
+    if checkProductCodeExists productCode then
+        productCode
+    else
+        failwith "Invalid Product Code"
+```
+
+Сигнатура этой функции-адаптера автоматически определяется компилятором как:
+
+```text
+('a -> bool) -> 'a -> 'a
+```
+
+Поэтому:
+
+1. Для generic переменных можно использовать более абстрактные короткие имена.
+2. Hard-coded сообщение можно вынести как параметр, чтобы функция была переиспользуемой.
+
+В итоге, получится так (см. тут [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs)):
+
+```fsharp
+// ... string -> ('a -> bool) -> 'a -> 'a
+let predicateToPassthru errorMsg f x =
+    if f x then
+        x
+    else
+        failwith errorMsg
+```
+
+#### Возврат к функции `toProductCode`
+
+Теперь, можно описать `toProductionCode` с использованием `predicateToPassthru`:
+
+```fsharp
+// ... CheckProductCodeExists -> string -> bool
+let toProductCode (checkProductCodeExists : CheckProductCodeExists) productCode =
+    // create a local ProductCode -> ProductCode function
+    // suitable for using in a pipeline
+    let checkProduct productCode =
+        let errorMsg = sprintf "Invalid: %A" productCode
+        predicateToPassthru errorMsg checkProductCodeExists productCode
+
+    productCode                 // ... string
+    |> ProductCode.create       // ... ProductCode
+    |> checkProduct             // ... ProductCode
+```
+
+Что нам и требовалось.
+

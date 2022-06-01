@@ -20,4 +20,3 @@ type Address = {
     City : String50
     ZipCode : ZipCode
 }
-
