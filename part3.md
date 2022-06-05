@@ -513,6 +513,17 @@ let validateOrder : ValidateOrder =
 При обычном определении функции подобного рода ошибки обычно появляются на этапе
 компоновки нескольких функций.
 
+>Если есть steps (шаги) в pipeline, которые пока не хочется/неизвестно как реализовать, то можно
+>в код ставить временные заглушки без реализации наподобие:
+>
+>```fsharp
+>let priceOrder : PriceOrder =
+>    fun getProductPrice validatedOrder ->
+>        failwith "not implemented"
+>```
+>
+>Такой подход позволит компилировать проект на любом этапе разработки.
+
 ## Implementing the Validation Step
 
 Реализация validation (проверочного) step.
@@ -572,6 +583,12 @@ type ValidateOrder =
   * `ProductCode`, состоит ("OR") из `WidgetCode` и `GizmoCode`
   * `OrderQuantity`, состоит ("OR") из `UnitQuantity` и `KilogramQuantity`
 
+* Файл [CompoundTypes.fs](fs/chapter09/OrderTaking/CompoundTypes.fs). Описание составных типов данных.
+
+  * `PersonalName`
+  * `CustomerInfo`
+  * `Address`
+
 * Файл [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs). Описание типов данных, доступных
 "снаружи" domain.
 
@@ -579,12 +596,6 @@ type ValidateOrder =
   * `UnvalidatedCustomerInfo`
   * `UnvalidatedOrderLine`
   * `UnvalidatedOrder`
-
-* Файл [CompoundTypes.fs](fs/chapter09/OrderTaking/CompoundTypes.fs). Описание составных типов данных.
-
-  * `PersonalName`
-  * `CustomerInfo`
-  * `Address`
 
 * Файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs). Описание validation step, функций
 и типов данных, необходимых для его реализации.
@@ -619,6 +630,10 @@ let validateOrder : ValidateOrder =
             unvalidatedOrder.ShippingAddress
             |> toAddress checkAddressExists     // helper function #2
 
+        let billingAddress =
+            unvalidatedOrder.BillingAddress
+            |> toAddress checkAddressExists     // helper function #2
+
         // convert each line using 'toValidatedOrderLine'
         let orderLines =
             unvalidatedOrder.Lines
@@ -627,13 +642,14 @@ let validateOrder : ValidateOrder =
         // and so on, for each property of the unvalidatedOrder
         // when all the fields are ready, use them to
         // create and return a new "ValidatedOrder" record
-        {
+        let validatedOrder = {
             OrderId = orderId
             CustomerInfo = customerInfo
             ShippingAddress = shippingAddress
-            BillingAddress = ...
-            Lines = ...
+            BillingAddress = billingAddress
+            Lines = orderLines
         }
+        validatedOrder
 ```
 
 ### Реализация helper functions
@@ -831,3 +847,168 @@ let toProductCode (checkProductCodeExists : CheckProductCodeExists) productCode 
 
 Что нам и требовалось.
 
+### Объединение всего в функцию `validateOrder`
+
+См. функцию тут [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... CheckProductCodeExists -> CheckAddressExists -> UnvalidatedOrder -> ValidatedOrder
+let validateOrder : ValidateOrder =
+    fun checkProductCodeExists checkAddressExists unvalidatedOrder ->
+        let orderId =
+            unvalidatedOrder.OrderId            //...string
+            |> OrderId.create                   //...OrderId
+        let customerInfo =
+            unvalidatedOrder.CustomerInfo       //...UnvalidatedCustomerInfo
+            |> toCustomerInfo                   //...CustomerInfo
+        let shippingAddress =
+            unvalidatedOrder.ShippingAddress    //...UnvalidatedAddress
+            |> toAddress checkAddressExists     //...Address
+        let billingAddress =
+            unvalidatedOrder.BillingAddress     //...UnvalidatedAddress
+            |> toAddress checkAddressExists     //...Address
+        let lines =
+            unvalidatedOrder.Lines              //...UnvalidatedOrderLine list
+            |> List.map (toValidatedOrderLine checkProductCodeExists)   //...ValidatedOrderLine list
+        let validatedOrder : ValidatedOrder = {
+            OrderId = orderId
+            CustomerInfo = customerInfo
+            ShippingAddress = shippingAddress
+            BillingAddress = billingAddress
+            Lines = lines
+        }
+        validatedOrder
+```
+
+## Implementing the Rest of the Steps
+
+После реализации `validateOrder` надо реализовать остальные функции, используя те же самые
+подходы.
+
+Описание price order step с "эффектами".
+
+```fsharp
+type PriceOrder =
+    GetProductPrice                                 // dependency
+        -> ValidateOrder                            // input
+        -> Result<PricedOrder, PlaceOrderError>     // output
+```
+
+Как говорилось выше, вначале, для упрощения, будут созданы функции без "эффектов" - без
+использования `Result`, `Async` и т.п.
+
+Поэтому на данном этапе вместо эффектов в случае ошибки будет кидаться исключение (потом, на
+следующих этапах, все будет сделано как надо):
+
+```fsharp
+type GetProductPrice = ProductCode -> Price
+
+type PriceOrder =
+    GetProductPrice             // dependency
+        -> ValidatedOrder       // input
+        -> PricedOrder          // output
+```
+
+Дописаны еще типы, которые требуются для реализации price order step:
+
+* Файл [SimpleTypes.fs](fs/chapter09/OrderTaking/SimpleTypes.fs). Описание simple types
+(простых типов) данных.
+
+  * `Price`
+  * `BillingAmount` (немного про него будет далее)
+
+* Файл [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs). Описание типов данных, доступных
+"снаружи" domain.
+
+  * `PricedOrderLine`
+  * `PricedOrder`
+
+* Файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs). Описание price order step, функций
+и типов данных, необходимых для его реализации.
+
+  Функции:
+
+  * `GetProductPrice`
+  * `PriceOrder`
+
+Главная функция для этой стадии выглядит так [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... GetProductPrice -> ValidatedOrder -> PricedOrder
+let priceOrder : PriceOrder =
+    fun getProductPrice validatedOrder ->
+        let lines =
+            validatedOrder.Lines                                //...ValidatedOrderLine list
+            |> List.map (toPricedOrderLine getProductPrice)     //...PricedOrderLine list
+        let amountToBill =
+            lines                                               //...PricedOrderLine list
+            |> List.map (fun line -> line.LinePrice)            //...Price list
+            |> BillingAmount.sumPrices                          //...BillingAmount
+        let pricedOrder : PricedOrder = {
+            OrderId = validatedOrder.OrderId                    //...OrderId
+            CustomerInfo = validatedOrder.CustomerInfo          //...CustomerInfo
+            ShippingAddress = validatedOrder.ShippingAddress    //...ShippingAddress
+            BillingAddress = validatedOrder.BillingAddress      //...BillingAddress
+            Lines = lines                                       //...PricedOrderLine list
+            AmountToBill = amountToBill                         //...BillingAmount
+        }
+        pricedOrder
+```
+
+Здесь есть две helper functions:
+
+1. `BillingAmount.sumPrices` - helper function #1
+2. `toPricedOrderLine` - helper function #2
+
+### Creating `BillingAmount.sumPrices`. (Helper function #1)
+
+Для типа `BillingAmount` помимо методов `value`, `validate` и `create` добавлен метод
+`sumPrices` (см. [SimpleTypes.fs](fs/chapter09/OrderTaking/SimpleTypes.fs)):
+
+```fsharp
+// ... list<Price> -> BillingAmount
+let sumPrices prices =
+    let total =
+        prices                      // ... Price list
+        |> List.map Price.value     // ... decimal list
+        |> List.sum                 // ... decimal
+    create total
+```
+
+где `Price` - тип-обертка над типом decimal
+
+```fsharp
+type Price = private Price of decimal
+```
+
+### Creating `toPricedOrderLine`. (Helper function #2)
+
+Вспомогательная функция `toPricedOrderLine` трансформирует `ValidatedOrderLine`
+в `PricedOrderLine`.
+
+См. в файле [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... (ProductCode -> Price) -> ValidatedOrderLine -> PricedOrderLine
+let toPricedOrderLine getProductPrice (line : ValidatedOrderLine) : PricedOrderLine =
+    let qty = line.Quantity |> OrderQuantity.value      //...decimal
+    let price = line.ProductCode |> getProductPrice     //...Price
+    let linePrice = price |> Price.multiply qty         //...Price
+
+    {                                       //...PricedOrderLine
+        OrderLineId = line.OrderLineId      //...OrderLineId
+        ProductCode = line.ProductCode      //...ProductCode
+        Quantity = line.Quantity            //...OrderQuantity
+        LinePrice = linePrice               //...Price
+    }
+```
+
+где `Price.multiply` ([SimpleTypes.fs](fs/chapter09/OrderTaking/SimpleTypes.fs)):
+
+```fsharp
+// ... decimal -> Price -> Price
+let multiply qty (Price p) =
+    create (qty * p)
+```
+
+это простое перемножение цены на количество товаров.

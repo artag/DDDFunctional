@@ -49,6 +49,12 @@ type OrderQuantity =
 | Unit of UnitQuantity
 | Kilogram of KilogramQuantity
 
+/// Constrained to be a decimal between 0.0 and 1000.00.
+type Price = private Price of decimal
+
+/// Constrained to be a decimal between 0.0 and 10000.00.
+type BillingAmount = private BillingAmount of decimal
+
 module NonEmptyString =
 
     /// Return the value inside a NotEmptyString.
@@ -387,3 +393,70 @@ module OrderQuantity =
             quantity                    // ... decimal
             |> KilogramQuantity.create  // to KilogramQuantity
             |> Kilogram                 // lift to OrderQuantity type
+
+module Price =
+
+    /// Minimum price.
+    let minimum = 0.0M
+
+    /// Maximum price.
+    let maximum = 1000.00M
+
+    /// Return the value inside a Price
+    // ... Price -> decimal
+    let value (Price v) = v
+
+    /// Create a Price from a decimal.
+    /// Throw Exception if input is not a decimal between 0.0 and 1000.00.
+    // ... decimal -> Price
+    let create v =
+        if minimum <= v && v <= maximum then
+            Price v
+        else
+            let msg = sprintf "The price value must be between %M and %M" minimum maximum
+            failwith msg
+
+    /// Multiply a Price by a decimal qty.
+    /// Throw Exception if new price is out of bounds.
+    // ... decimal -> Price -> Price
+    let multiply qty (Price p) =
+        create (qty * p)
+
+module BillingAmount =
+
+    /// Minimum billing amount.
+    let minimum = 0.0M
+
+    /// Maximum billing amount.
+    let maximum = 10000.0M
+
+    /// Return the value inside a BillingAmount.
+    // ... BillingAmount -> decimal
+    let value (BillingAmount v) = v
+
+    /// Validate a decimal input.
+    /// Throw Exception if input is not a decimal between 0.0 and 10000.00.
+    // ... decimal -> decimal
+    let validate v =
+        if minimum <= v && v <= maximum then
+            v
+        else
+            let msg = sprintf "The billing amount value must be between %M and %M" minimum maximum
+            failwith msg
+
+    /// Create a BillingAmount from a decimal.
+    /// Throw Exception if input is not a decimal between 0.0 and 10000.00.
+    // ... decimal -> BillingAmount
+    let create v =
+        validate v
+        |> BillingAmount
+
+    /// Sum a list of prices to make a billing amount.
+    /// Throw Exception if total is out of bounds.
+    // ... list<Price> -> BillingAmount
+    let sumPrices prices =
+        let total =
+            prices                      // ... Price list
+            |> List.map Price.value     // ... decimal list
+            |> List.sum                 // ... decimal
+        create total

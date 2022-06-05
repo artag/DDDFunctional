@@ -8,6 +8,10 @@ open CompoundTypes
 // Section 1 : Define each step in the workflow using types
 // ======================================================
 
+// ---------------------------
+// Validation step
+// ---------------------------
+
 type CheckedAddress = CheckedAddress of UnvalidatedAddress
 
 type ValidatedOrderLine = {
@@ -36,9 +40,26 @@ type ValidateOrder =
         -> UnvalidatedOrder
         -> ValidatedOrder
 
+// ---------------------------
+// Pricing step
+// ---------------------------
+
+type GetProductPrice =
+    ProductCode -> Price
+
+type PriceOrder =
+    GetProductPrice             // dependency
+        -> ValidatedOrder       // input
+        -> PricedOrder          // output
+
+
 // ======================================================
 // Section 2 : Implementation
 // ======================================================
+
+// ---------------------------
+// ValidateOrder step
+// ---------------------------
 
 // ... UnvalidatedCustomerInfo -> CustomerInfo
 let toCustomerInfo (customer : UnvalidatedCustomerInfo) : CustomerInfo =
@@ -129,3 +150,68 @@ let toValidatedOrderLine checkProductCodeExists
         Quantity = quantity
     }
     validatedOrderLine          // ... ValidatedOrderLine
+
+// ... CheckProductCodeExists -> CheckAddressExists -> UnvalidatedOrder -> ValidatedOrder
+let validateOrder : ValidateOrder =
+    fun checkProductCodeExists checkAddressExists unvalidatedOrder ->
+        let orderId =
+            unvalidatedOrder.OrderId            //...string
+            |> OrderId.create                   //...OrderId
+        let customerInfo =
+            unvalidatedOrder.CustomerInfo       //...UnvalidatedCustomerInfo
+            |> toCustomerInfo                   //...CustomerInfo
+        let shippingAddress =
+            unvalidatedOrder.ShippingAddress    //...UnvalidatedAddress
+            |> toAddress checkAddressExists     //...Address
+        let billingAddress =
+            unvalidatedOrder.BillingAddress     //...UnvalidatedAddress
+            |> toAddress checkAddressExists     //...Address
+        let lines =
+            unvalidatedOrder.Lines              //...UnvalidatedOrderLine list
+            |> List.map (toValidatedOrderLine checkProductCodeExists)   //...ValidatedOrderLine list
+        let validatedOrder : ValidatedOrder = {
+            OrderId = orderId
+            CustomerInfo = customerInfo
+            ShippingAddress = shippingAddress
+            BillingAddress = billingAddress
+            Lines = lines
+        }
+        validatedOrder
+
+
+// ---------------------------
+// PriceOrder step
+// ---------------------------
+
+// ... (ProductCode -> Price) -> ValidatedOrderLine -> PricedOrderLine
+let toPricedOrderLine getProductPrice (line : ValidatedOrderLine) : PricedOrderLine =
+    let qty = line.Quantity |> OrderQuantity.value      //...decimal
+    let price = line.ProductCode |> getProductPrice     //...Price
+    let linePrice = price |> Price.multiply qty         //...Price
+
+    {                                       //...PricedOrderLine
+        OrderLineId = line.OrderLineId      //...OrderLineId
+        ProductCode = line.ProductCode      //...ProductCode
+        Quantity = line.Quantity            //...OrderQuantity
+        LinePrice = linePrice               //...Price
+    }
+
+// ... GetProductPrice -> ValidatedOrder -> PricedOrder
+let priceOrder : PriceOrder =
+    fun getProductPrice validatedOrder ->
+        let lines =
+            validatedOrder.Lines                                //...ValidatedOrderLine list
+            |> List.map (toPricedOrderLine getProductPrice)     //...PricedOrderLine list
+        let amountToBill =
+            lines                                               //...PricedOrderLine list
+            |> List.map (fun line -> line.LinePrice)            //...Price list
+            |> BillingAmount.sumPrices                          //...BillingAmount
+        let pricedOrder : PricedOrder = {
+            OrderId = validatedOrder.OrderId                    //...OrderId
+            CustomerInfo = validatedOrder.CustomerInfo          //...CustomerInfo
+            ShippingAddress = validatedOrder.ShippingAddress    //...ShippingAddress
+            BillingAddress = validatedOrder.BillingAddress      //...BillingAddress
+            Lines = lines                                       //...PricedOrderLine list
+            AmountToBill = amountToBill                         //...BillingAmount
+        }
+        pricedOrder

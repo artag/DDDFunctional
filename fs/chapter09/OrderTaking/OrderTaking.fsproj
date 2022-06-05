@@ -5,8 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="SimpleTypes.fs" />
-    <Compile Include="PublicTypes.fs" />
     <Compile Include="CompoundTypes.fs" />
+    <Compile Include="PublicTypes.fs" />
     <Compile Include="PlaceOrder.fs" />
   </ItemGroup>
 </Project>

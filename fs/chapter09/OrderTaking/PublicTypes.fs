@@ -1,6 +1,11 @@
 module OrderTaking.PublicTypes
 
+open SimpleTypes
+open CompoundTypes
+
+// ---------------------------
 // Workflow input.
+// ---------------------------
 
 type UnvalidatedAddress = {
     AddressLine1 : string
@@ -29,4 +34,24 @@ type UnvalidatedOrder = {
     ShippingAddress : UnvalidatedAddress
     BillingAddress : UnvalidatedAddress
     Lines : UnvalidatedOrderLine list
+}
+
+// ---------------------------
+// Workflow output.
+// ---------------------------
+
+type PricedOrderLine = {
+    OrderLineId : OrderLineId
+    ProductCode : ProductCode
+    Quantity : OrderQuantity
+    LinePrice : Price
+}
+
+type PricedOrder = {
+    OrderId : OrderId
+    CustomerInfo : CustomerInfo
+    ShippingAddress : Address
+    BillingAddress : Address
+    AmountToBill : BillingAmount
+    Lines : PricedOrderLine list
 }
