@@ -1012,3 +1012,71 @@ let multiply qty (Price p) =
 ```
 
 это простое перемножение цены на количество товаров.
+
+### Implementing the Acknowledgment (подтверждение) Step
+
+Изменения в файле [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs):
+
+```fsharp
+/// Event will be created if the Acknowledgment was successfully posted.
+type OrderAcknowledgmentSent = {
+    OrderId : OrderId
+    EmailAddress : EmailAddress
+}
+```
+
+Добавление в файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs)
+простых типов данных и сигнатур функций:
+
+```fsharp
+type HtmlString = HtmlString of string
+
+type OrderAcknowledgment = {
+    EmailAddress : EmailAddress
+    Letter : HtmlString
+}
+
+type SendResult = Send | NotSend
+
+type CreateOrderAcknowledgmentLetter =
+    PricedOrder -> HtmlString
+
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> SendResult
+
+type AcknowledgeOrder =
+    CreateOrderAcknowledgmentLetter
+        -> SendOrderAcknowledgment
+        -> PricedOrder
+        -> OrderAcknowledgmentSent option
+```
+
+Реализация основной функции acknowledgment step (см. [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs)):
+
+```fsharp
+// ... CreateOrderAcknowledgmentLetter : PricedOrder -> HtmlString
+// ... SendOrderAcknowledgment : OrderAcknowledgment -> SendResult
+// ... CreateOrderAcknowledgmentLetter -> SendOrderAcknowledgment -> PricedOrder -> OrderAcknowledgmentSent option
+let acknowledgeOrder : AcknowledgeOrder =
+    fun createAcknowledgmentLetter sendAcknowledgment pricedOrder ->
+        let letter = createAcknowledgmentLetter pricedOrder         //...HtmlString
+        let acknowledgment = {                                      //...OrderAcknowledgment
+            EmailAddress = pricedOrder.CustomerInfo.EmailAddress
+            Letter = letter
+        }
+
+        // if the acknowledgment was successfully sent,
+        // return the corresponding event, else return None
+        // ... SendOrderAcknowledgment -> OrderAcknowledgment -> OrderAcknowledgmentSent option
+        match sendAcknowledgment acknowledgment with
+        | Sent ->
+            let event = {       // OrderAcknowledgmentSent
+                OrderId = pricedOrder.OrderId
+                EmailAddress = pricedOrder.CustomerInfo.EmailAddress
+            }
+            Some event
+        | NotSent ->
+            None
+```
+
+Реализацию зависимости `sendAcknowledgment` решено отложить "на потом".

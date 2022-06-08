@@ -40,6 +40,12 @@ type UnvalidatedOrder = {
 // Workflow output.
 // ---------------------------
 
+/// Event will be created if the Acknowledgment was successfully posted.
+type OrderAcknowledgmentSent = {
+    OrderId : OrderId
+    EmailAddress : EmailAddress
+}
+
 type PricedOrderLine = {
     OrderLineId : OrderLineId
     ProductCode : ProductCode

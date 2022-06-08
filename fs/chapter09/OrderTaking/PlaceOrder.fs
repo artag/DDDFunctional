@@ -52,6 +52,31 @@ type PriceOrder =
         -> ValidatedOrder       // input
         -> PricedOrder          // output
 
+// ---------------------------
+// Send OrderAcknowledgment
+// ---------------------------
+
+type HtmlString = HtmlString of string
+
+type OrderAcknowledgment = {
+    EmailAddress : EmailAddress
+    Letter : HtmlString
+}
+
+type SendResult = Sent | NotSent
+
+type CreateOrderAcknowledgmentLetter =
+    PricedOrder -> HtmlString
+
+type SendOrderAcknowledgment =
+    OrderAcknowledgment -> SendResult
+
+type AcknowledgeOrder =
+    CreateOrderAcknowledgmentLetter             // dependency
+        -> SendOrderAcknowledgment              // dependency
+        -> PricedOrder                          // input
+        -> OrderAcknowledgmentSent option       // output
+
 
 // ======================================================
 // Section 2 : Implementation
@@ -215,3 +240,31 @@ let priceOrder : PriceOrder =
             AmountToBill = amountToBill                         //...BillingAmount
         }
         pricedOrder
+
+// ---------------------------
+// AcknowledgeOrder step
+// ---------------------------
+
+// ... CreateOrderAcknowledgmentLetter : PricedOrder -> HtmlString
+// ... SendOrderAcknowledgment : OrderAcknowledgment -> SendResult
+// ... CreateOrderAcknowledgmentLetter -> SendOrderAcknowledgment -> PricedOrder -> OrderAcknowledgmentSent option
+let acknowledgeOrder : AcknowledgeOrder =
+    fun createAcknowledgmentLetter sendAcknowledgment pricedOrder ->
+        let letter = createAcknowledgmentLetter pricedOrder             //...HtmlString
+        let acknowledgment = {                                          //...OrderAcknowledgment
+            EmailAddress = pricedOrder.CustomerInfo.EmailAddress
+            Letter = letter
+        }
+
+        // if the acknowledgment was successfully sent,
+        // return the corresponding event, else return None
+        // ... SendOrderAcknowledgment -> OrderAcknowledgment -> OrderAcknowledgmentSent option
+        match sendAcknowledgment acknowledgment with
+        | Sent ->
+            let event = {                           // OrderAcknowledgmentSent
+                OrderId = pricedOrder.OrderId
+                EmailAddress = pricedOrder.CustomerInfo.EmailAddress
+            }
+            Some event
+        | NotSent ->
+            None
