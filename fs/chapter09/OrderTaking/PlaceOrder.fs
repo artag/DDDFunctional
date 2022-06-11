@@ -77,6 +77,14 @@ type AcknowledgeOrder =
         -> PricedOrder                          // input
         -> OrderAcknowledgmentSent option       // output
 
+// ---------------------------
+// Create events
+// ---------------------------
+
+type CreateEvents =
+    PricedOrder                                 // input
+        -> OrderAcknowledgmentSent option       // input (event from previous step)
+        -> PlaceOrderEvent list                 // output
 
 // ======================================================
 // Section 2 : Implementation
@@ -268,3 +276,51 @@ let acknowledgeOrder : AcknowledgeOrder =
             Some event
         | NotSent ->
             None
+
+// ---------------------------
+// Create events
+// ---------------------------
+
+// ... PricedOrder -> BillableOrderPlaced option
+let createBillingEvent (placedOrder : PricedOrder) : BillableOrderPlaced option =
+    let billingAmount = placedOrder.AmountToBill |> BillingAmount.value
+    if billingAmount > 0M then
+        let order = {                           // BillableOrderPlaced
+            OrderId = placedOrder.OrderId
+            BillingAddress = placedOrder.BillingAddress
+            AmountToBill = placedOrder.AmountToBill
+        }
+        Some order
+    else
+        None
+
+/// Helper to convert an Option into a List.
+// ... option<'a> -> list<'a>
+let listOfOption opt =
+    match opt with
+    | Some x -> [x]
+    | None -> []
+
+// ... PricedOrder -> OrderAcknowledgmentSent -> PlaceOrderEvent list
+let createEvents : CreateEvents =
+    fun pricedOrder acknowledgmentEventOpt ->
+        let events1 =
+            pricedOrder                         //...PricedOrder
+            |> PlaceOrderEvent.OrderPlaced      //...PlaceOrderEvent
+            |> List.singleton                   //...PlaceOrderEvent list
+        let events2 =
+            acknowledgmentEventOpt                              //...OrderAcknowledgmentSent option
+            |> Option.map PlaceOrderEvent.AcknowledgmentSent    //...PlaceOrderEvent option
+            |> listOfOption                                     //...PlaceOrderEvent list
+        let events3 =
+            pricedOrder                                         //...PricedOrder
+            |> createBillingEvent                               //...BillableOrderPlaced option
+            |> Option.map PlaceOrderEvent.BillableOrderPlaced   //...PlaceOrderEvent option
+            |> listOfOption                                     //...PlaceOrderEvent list
+
+        // return all the events
+        [
+            yield! events1
+            yield! events2
+            yield! events3
+        ]

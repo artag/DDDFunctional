@@ -1080,3 +1080,144 @@ let acknowledgeOrder : AcknowledgeOrder =
 ```
 
 Реализацию зависимости `sendAcknowledgment` решено отложить "на потом".
+
+### Creating the Events
+
+Создадим события, которые будут возвращены из рабочего процесса.
+
+Уточнение к требованиям: событие выставления счетов следует отправлять только в том случае,если подлежащая оплате сумма больше нуля.
+
+События (см. файл [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs)):
+
+```fsharp
+/// Event to send to shipping context.
+type OrderPlaced = PricedOrder
+
+/// Event to send to billing context.
+/// Will only be created if the AmountToBill is not zero.async
+type BillableOrderPlaced = {
+    OrderId : OrderId
+    BillingAddress : Address
+    AmountToBill : BillingAmount
+}
+
+/// The possible events resulting from the PlaceOrder workflow
+/// Not all events will occur, depending on the logic of the workflow
+type PlaceOrderEvent =
+    | OrderPlaced of OrderPlaced
+    | BillableOrderPlaced of BillableOrderPlaced
+    | AcknowledgmentSent of OrderAcknowledgmentSent
+```
+
+Напоминание. Из предыдущего раздела событие `OrderAcknowledgmentSent`:
+
+```fsharp
+/// Event will be created if the Acknowledgment was successfully posted.
+type OrderAcknowledgmentSent = {
+    OrderId : OrderId
+    EmailAddress : EmailAddress
+}
+```
+
+Описании функции, которая будет создавать все эти события (см. в файле [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs)):
+
+```fsharp
+type CreateEvents =
+    PricedOrder                                 // input
+        -> OrderAcknowledgmentSent option       // input (event from previous step)
+        -> PlaceOrderEvent list                 // output
+```
+
+Реализация функции для создания `BillableOrderPlaced`:
+
+```fsharp
+// ... PricedOrder -> BillableOrderPlaced option
+let createBillingEvent (placedOrder : PricedOrder) : BillableOrderPlaced option =
+    let billingAmount = placedOrder.AmountToBill |> BillingAmount.value
+    if billingAmount > 0M then
+        let order = {                           // BillableOrderPlaced
+            OrderId = placedOrder.OrderId
+            BillingAddress = placedOrder.BillingAddress
+            AmountToBill = placedOrder.AmountToBill
+        }
+        Some order
+    else
+        None
+```
+
+Для создания всех событий надо три события `OrderPlaced`, `BillableOrderPlaced`
+и `PlaceOrderEvent`:
+
+1. Упаковать в `PlaceOrderEvent`. Каждый.
+2. По требованиям, `BillableOrderPlaced` и `PlaceOrderEvent` возвращаются как `option`.
+3. `PlaceOrderEvent` возвращается в виде `list`.
+
+Поэтому в данном случае необходимо использовать подход "lowest common multiple" ("наименьшее общее
+кратное") - было описано выше.
+
+Функция `createEvent` для создания всех событий:
+
+```fsharp
+// ... PricedOrder -> OrderAcknowledgmentSent -> PlaceOrderEvent list
+let createEvents : CreateEvents =
+    fun pricedOrder acknowledgmentEventOpt ->
+        let event1 =
+            pricedOrder                         //...PricedOrder
+            |> PlaceOrderEvent.OrderPlaced      //...PlaceOrderEvent
+        let event2Opt =
+            acknowledgmentEventOpt                              //...OrderAcknowledgmentSent option
+            |> Option.map PlaceOrderEvent.AcknowledgmentSent    //...PlaceOrderEvent option
+        let event3Opt =
+            pricedOrder                                         //...PricedOrder
+            |> createBillingEvent                               //...BillableOrderPlaced option
+
+        // Как объединить все события?
+        ...
+```
+
+Для упаковки обычного значения в list можно использовать стандартную фукцию `List.singleton`.
+Она просто упаковывает значение в list:
+
+```text
+// 'T -> list<'T>
+List.Singleton value = ...
+```
+
+Вспомогательная функция для упаковки `option<value>` в `list<value>` (см. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+/// Helper to convert an Option into a List.
+// ... option<'a> -> list<'a>
+let listOfOption opt =
+    match opt with
+    | Some x -> [x]
+    | None -> []
+```
+
+Итоговая функция будет выглядеть так (см. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... PricedOrder -> OrderAcknowledgmentSent -> PlaceOrderEvent list
+let createEvents : CreateEvents =
+    fun pricedOrder acknowledgmentEventOpt ->
+        let events1 =
+            pricedOrder                         //...PricedOrder
+            |> PlaceOrderEvent.OrderPlaced      //...PlaceOrderEvent
+            |> List.singleton                   //...PlaceOrderEvent list
+        let events2 =
+            acknowledgmentEventOpt                              //...OrderAcknowledgmentSent option
+            |> Option.map PlaceOrderEvent.AcknowledgmentSent    //...PlaceOrderEvent option
+            |> listOfOption                                     //...PlaceOrderEvent list
+        let events3 =
+            pricedOrder                                         //...PricedOrder
+            |> createBillingEvent                               //...BillableOrderPlaced option
+            |> Option.map PlaceOrderEvent.BillableOrderPlaced   //...PlaceOrderEvent option
+            |> listOfOption                                     //...PlaceOrderEvent list
+
+        // return all the events
+        [
+            yield! events1
+            yield! events2
+            yield! events3
+        ]
+```

@@ -61,3 +61,21 @@ type PricedOrder = {
     AmountToBill : BillingAmount
     Lines : PricedOrderLine list
 }
+
+/// Event to send to shipping context.
+type OrderPlaced = PricedOrder
+
+/// Event to send to billing context.
+/// Will only be created if the AmountToBill is not zero.async
+type BillableOrderPlaced = {
+    OrderId : OrderId
+    BillingAddress : Address
+    AmountToBill : BillingAmount
+}
+
+/// The possible events resulting from the PlaceOrder workflow
+/// Not all events will occur, depending on the logic of the workflow
+type PlaceOrderEvent =
+    | OrderPlaced of OrderPlaced
+    | BillableOrderPlaced of BillableOrderPlaced
+    | AcknowledgmentSent of OrderAcknowledgmentSent
