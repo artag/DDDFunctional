@@ -4,6 +4,13 @@ open SimpleTypes
 open PublicTypes
 open CompoundTypes
 
+// ------------------------------------
+// the workflow itself, without effects
+
+type PlaceOrderWorkflow =
+    UnvalidatedOrder -> PlaceOrderEvent list
+
+
 // ======================================================
 // Section 1 : Define each step in the workflow using types
 // ======================================================
@@ -324,3 +331,31 @@ let createEvents : CreateEvents =
             yield! events2
             yield! events3
         ]
+
+// ---------------------------
+// Overall workflow
+// ---------------------------
+
+// ... CheckProductCodeExists -> CheckAddressExists -> GetProductPrice ->
+// ...      CreateOrderAcknowledgmentLetter -> SendOrderAcknowledgment ->
+// ...      UnvalidatedOrder -> PlaceOrderEvent list
+let placeOrder
+    checkProductCodeExists          // dependency
+    checkAddressExists              // dependency
+    getProductPrice                 // dependency
+    createAcknowledgmentLetter      // dependency
+    sendOrderAcknowledgment         // dependency
+        : PlaceOrderWorkflow =      // function definition
+    fun unvalidatedOrder ->
+        let validatedOrder =            // ValidatedOrder
+            unvalidatedOrder            // UnvalidatedOrder
+            |> validateOrder checkProductCodeExists checkAddressExists
+        let pricedOrder =               // PricedOrder
+            validatedOrder              // ValidatedOrder
+            |> priceOrder getProductPrice
+        let acknowledgementOption =     // OrderAcknowledgmenSent option
+            pricedOrder                 // PricedOrder
+            |> acknowledgeOrder createAcknowledgmentLetter sendOrderAcknowledgment
+        let events =                    // PlaceOrderEvent list
+            createEvents pricedOrder acknowledgementOption
+        events

@@ -1221,3 +1221,226 @@ let createEvents : CreateEvents =
             yield! events3
         ]
 ```
+
+## Composing the Pipeline Steps Together
+
+Объединение всех стадий/шагов в workflow хочется чтобы выглядело так:
+
+```fsharp
+let placeOrder : PlaceOrderWorkflow =
+    fun unvalidatedOrder ->
+        unvalidatedOrder
+        |> validateOrder
+        |> priceOrder
+        |> acknowledgeOrder
+        |> createEvents
+```
+
+Но в функциях возникают проблемы с компоновкой: у некоторых из них количество входов не совпадает
+с количеством входных значений из предыдущих стадий.
+
+Например, для `validateOrder`:
+
+<img src="images/ch09_validation_order.jpg" alt="validateOrder function. Inputs and outputs don't match" width=650>
+
+```fsharp
+// ... CheckProductCodeExists -> CheckAddressExists -> UnvalidatedOrder -> ValidatedOrder
+let validateOrder : ValidateOrder = ...
+```
+
+Или для `priceOrder`:
+
+<img src="images/ch09_price_order.jpg" alt="priceOrder function. Inputs and outputs don't match" width=650>
+
+```fsharp
+// ... GetProductPrice -> ValidatedOrder -> PricedOrder
+let priceOrder : PriceOrder = ...
+```
+
+Composing (составление) функций с различными "формами", является одной из основных проблем в
+функциональном программировании. Большинство решений используют страшную "монаду". Но сейчас,
+для упрощения, будет использован подход partial application (частичное применение).
+
+Применим два из трех параметров к `validateOrder` (две зависимости), что даст новую
+функцию только с одним входом:
+
+<img src="images/ch09_validation_apply.jpg" alt="validateOrder function. Applying parameters" width=650>
+
+В коде partial application будет выгляеть так:
+
+```fsharp
+// UnvalidatedOrder -> ValidatedOrder
+let validateOrderWithDependenciesBakedIn =
+    validateOrder checkProductCodeExists checkAddressExists
+```
+
+Используя "shadowing" локально можно назвать функцию как и applied или использовать символ `'`:
+
+```fsharp
+// UnvalidatedOrder -> ValidatedOrder
+let validateOrder =
+    validateOrder checkProductCodeExists checkAddressExists
+
+let validateOrder' =
+    validateOrder checkProductCodeExists checkAddressExists
+```
+
+Аналогично, partial application можно сделать для функции `priceOrder`:
+
+<img src="images/ch09_price_apply.jpg" alt="priceOrder function. Applying parameters" width=650>
+
+Используя partial application, главную функцию workflow `placeOrder` можно записать так:
+
+```fsharp
+type PlaceOrderWorkflow =
+    UnvalidatedOrder -> PlaceOrderEvent list
+
+// ... UnvalidatedOrder -> PlaceOrderEvent list
+let placeOrder : PlaceOrderWorkflow =
+    let validateOrder =
+        validateOrder checkProductCodeExists checkAddressExists
+    let priceOrder =
+        priceOrder getProductPrice
+    let acknowledgeOrder =
+        acknowledgeOrder createAcknowledgmentLetter sendOrderAcknowledgment
+    fun unvalidatedOrder ->
+        unvalidatedOrder
+        |> validateOrder
+        |> priceOrder
+        |> acknowledgeOrder
+        |> createEvents
+```
+
+Здесь функция `acknowledgeOrder` не компонуется с `createEvents`. Можно написать небольшую
+функцию-адаптер. Или можно реализовать функцию `placeOrder` в императивном стиле:
+
+```fsharp
+type PlaceOrderWorkflow =
+    UnvalidatedOrder -> PlaceOrderEvent list
+
+// ... UnvalidatedOrder -> PlaceOrderEvent list
+let placeOrder : PlaceOrderWorkflow =
+    fun unvalidatedOrder ->
+        let validatedOrder =
+            unvalidatedOrder
+            |> validateOrder checkProductCodeExists checkAddressExists
+        let pricedOrder =
+            validatedOrder
+            |> priceOrder getProductPrice
+        let acknowledgementOption =
+            pricedOrder
+            |> acknowledgeOrder createAcknowledgmentLetter sendOrderAcknowledgment
+        let events =
+            createEvents pricedOrder acknowledgementOption
+        events
+```
+
+Но, опять проблема. Как получить зависимости:
+
+* `checkProductCodeExists`
+* `checkAddressExists`
+* `getProductPrice`
+* `createAcknowledgmentLetter`
+* `sendOrderAcknowledgment`
+?
+
+## Injecting Dependencies
+
+Как получить зависимости от верхнего уровня вплоть до нижних функций?
+
+В ООП в таких случаях используется внедрение зависимостей и, возможно, контейнер IoC.
+
+В ФП этот прием не используется, т.к. зависимости становятся неявными.
+Вместо этого зависимости всегда передаются в виде явных параметров, что гарантирует
+их очевидность.
+
+В ФП есть ряд методов для выполнения такого рода задач: "Reader Monad" и
+"Free Monad". В этой книге используется самый простой способ:
+все зависимости передаются в функции верхнего уровня, которые затем передают
+их во внутренние функции и так далее.
+
+Вот как будет выглядеть главная функция workflow `placeOrder`
+(см. файл [PlaceOrder.fs](fs/chapter09/OrderTaking/PlaceOrder.fs):
+
+```fsharp
+// ... CheckProductCodeExists -> CheckAddressExists -> GetProductPrice ->
+// ...      CreateOrderAcknowledgmentLetter -> SendOrderAcknowledgment ->
+// ...      UnvalidatedOrder -> PlaceOrderEvent list
+let placeOrder
+    checkProductCodeExists          // dependency
+    checkAddressExists              // dependency
+    getProductPrice                 // dependency
+    createAcknowledgmentLetter      // dependency
+    sendOrderAcknowledgment         // dependency
+        : PlaceOrderWorkflow =      // function definition
+    fun unvalidatedOrder ->
+        let validatedOrder =            // ValidatedOrder
+            unvalidatedOrder            // UnvalidatedOrder
+            |> validateOrder checkProductCodeExists checkAddressExists
+        let pricedOrder =               // PricedOrder
+            validatedOrder              // ValidatedOrder
+            |> priceOrder getProductPrice
+        let acknowledgementOption =     // OrderAcknowledgmenSent option
+            pricedOrder                 // PricedOrder
+            |> acknowledgeOrder createAcknowledgmentLetter sendOrderAcknowledgment
+        let events =                    // PlaceOrderEvent list
+            createEvents pricedOrder acknowledgementOption
+        events
+```
+
+В ООП и ФП функцию или класс верхнего уровня, где производится настройка и установка всех
+зависимостей обычно называют *composition root* (корень композиции).
+
+Настройка и установка зависимостей на самом верхнем уровне имеет большое достоинство:
+все нижние функции можно легко протестировать, используя mock'и.
+
+На практике composition root должен быть как можно ближе к точке входа приложения - функции
+`main` для консольных приложений или обработчику `OnStartup/Application_Start`
+для длительно работающих приложений, таких как веб-сервисы.
+
+Пример для composition root в [Suave framework](https://suave.io/):
+
+```fsharp
+let app : WebPart =
+    // set up the services used by the workflow
+    let checkProductExists = ...
+    let checkAddressExists = ...
+    let getProductPrice = ...
+    let createOrderAcknowledgmentLetter = ...
+    let sendOrderAcknowledgment = ...
+    let toHttpResponse = ...
+
+    // set up the "placeOrder" workflow
+    // by partially applying the services to it
+    let placeOrder =
+        placeOrder
+            checkProductExists
+            checkAddressExists
+            getProductPrice
+            createOrderAcknowledgmentLetter
+            sendOrderAcknowledgment
+
+    // set up the other workflows
+    let changeOrder = ...
+    let cancelOrder = ...
+
+    // set up the routing
+    choose
+        [ POST >=> choose
+            [
+                path "/placeOrder"
+                    >=> deserializeOrder    // convert JSON to UnvalidatedOrder
+                    >=> placeOrder          // do the workflow
+                    >=> postEvents          // post the events onto queues
+                    >=> toHttpResponse      // return 200/400/etc based on the output
+                path "/changeOrder"
+                    >=> ...
+                path "/cancelOrder"
+                    >=> ...
+            ]
+        ]
+```
+
+# Links
+
+* [Suave framework](https://suave.io/)
