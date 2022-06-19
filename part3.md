@@ -1689,3 +1689,280 @@ let placeOrder
 * [Suave framework](https://suave.io/)
 
 * F# testing frameworks: `FsUnit`, `Unquote`, `FsCheck`, `Expecto`.
+
+# Chapter 10. Implementation: Working with Errors
+
+Любая система может иметь ошибки и те способы, как мы работаем с ошибками очень важны.
+Последовательная и прозрачная обработка ошибок имеет решающее значение для любой системы,
+готовой к работе.
+
+В этой главе в дополнение к предыдущей, вводится обработка ошибок ("эффектов")
+при реализации pipeline в функциональном стиле.
+
+## Using the Result Type to Make Errors Explicit
+
+ФП сосредоточена на более явном определении функций - могут ли они завершить свое выполнение
+ошибкой и какого рода эта ошибка будет.
+
+Ошибки часто рассматриваются как "граждане второго сорта". Нужно относиться к ошибкам как
+к "первоклассным гражданам". И вдвойне важно для ошибок, которые являются частью domain.
+
+Например, функция проверки адреса (см. предыущую главу) имела такое определение,
+а "под капотом" кидала исключение:
+
+```fsharp
+type CheckAddressExists =
+    UnvalidatedAddress -> CheckedAddress
+```
+
+Это определение крайне бесполезно, потому что не указывает на то, что может пойти не так.
+
+Чтобы было ясно, что функция может быть выполнена успешно или с ошибкой можно использовать тип
+`Result`, и тогда определение будет выглядеть примерно так:
+
+```fsharp
+type CheckAddressExists =
+    UnvalidatedAddress -> Result<CheckedAddress,AddressValidationError>
+
+and AddressValidationError =
+    | InvalidFormat of string
+    | AddressNotFound of string
+```
+
+Это определение может сказать нам следующее:
+
+* На входе ожидается `UnvalidatedAddress` (неподтвержденный адрес).
+* Если проверка прошла успешно, результатом будет `CheckedAddress` (возможно будет другой адрес).
+* Если проверка не прошла, то причина может быть в том, что:
+  * `InvalidFormat` (неверный формат адреса)
+  * `AddressNotFound` (адрес не был найден).
+
+Это показывает, как сигнатура функции может выступать в качестве документации.
+
+## Working with Domain Errors
+
+Можно разделить ошибки в ПО на три группы:
+
+* **Domain Errors** (ошибки домена). Это ошибки, которые следует ожидать как часть бизнес-процесса
+и, следовательно, должны быть включены в дизайн домена. Например: заказ, отклоненный при
+выставлении счета, или заказ, содержащий недопустимый код продукта.
+У бизнеса уже будут способы решения подобных проблем, и код должен будет их как-то отразить.
+
+* **Panics**. Это ошибки, которые оставляют систему в неизвестном состоянии. Например
+необработанные системные ошибки ("out of memory") или ошибки программиста
+("divide by zero" или "null reference").
+
+* **Infrastructure Errors** (ошибки инфраструктуры). Это ошибки, которые следует ожидать как часть
+архитектуры, но не являются частью какого-либо бизнес-процесса и которые не включены в домен.
+Например, network timeout (тайм-аут сети) или authentication failure (сбой аутентификации)
+
+Иногда неясно, является ли что-то ошибкой домена или нет. Если вы не уверены, просто спросите
+domain expert (эксперта по предметной области).
+
+Эти различные виды ошибок требуют различных реализаций.
+
+**Domain errors** (ошибки домена) являются частью домена, как и все остальное,
+и поэтому должны должны быть включены в domain modeling (моделирование предметной области),
+обсуждены с экспертами предметной области и по возможности, задокументированы в type system
+(системе типов).
+
+**Panics** are best handled by abandoning the workflow and raising an exception
+that is then caught at the highest appropriate level (such as the main function
+of the application or equivalent).
+
+**Panics** лучше всего обрабатывать, бросая исключение, которое затем перехватывается на
+самом высоком уровне иерархии (например, `main` функция приложения или ее эквивалент).
+
+Пример:
+
+```fsharp
+/// A workflow that panics if it gets bad input
+let workflowPart2 input =
+    if input = 0 then
+        raise (DivideByZeroException())
+    //...
+
+/// Top level function for the application
+/// which traps all exceptions from workflows.
+let main() =
+    // wrap all workflows in a try/with block
+    try
+        let result1 = workflowPart1()
+        let result2 = workflowPart2 result1
+        printfn "the result is %A" result2
+    // top level exception handling
+    with
+    | :? OutOfMemoryException ->
+        printfn "exited with OutOfMemoryException"
+    | :? DivideByZeroException ->
+        printfn "exited with DivideByZeroException"
+    | ex ->
+        printfn "exited with %s" ex.Message
+```
+
+**Infrastructure errors** могут быть обработаны с помощью любого из вышеперечисленных подходов.
+Точный выбор зависит от используемой вами архитектуры:
+
+* Если код состоит из множества небольших сервисов, то использование исключений может быть
+предпочтительней.
+* Если код это скорее монолитное приложение, то предпочтительно делать обработкау ошибок более
+явной.
+
+На самом деле, часто бывает полезно обрабатывать многие ошибки инфраструктуры
+так же, как и ошибки домена, потому что это заставляет думать о том, что может пойти не так.
+В некоторых случаях такого рода ошибки необходимо передавать на рассмотрение domain expert.
+Например, если сервис remote address validation недоступен, как должен измениться бизнес-процесс?
+Что мы должны сказать клиентам?
+Такого рода вопросы не могут быть решены командой разработчиков в одиночку, но должны
+рассматриваться domain experts и/или product owners.
+
+В этой главе внимание будет сосредоточено на ошибках предметной области.
+Panics и ошибки, которые мы не хотим моделировать, должны просто вызывать исключения
+и перехватываться функцией верхнего уровня, как было показано выше.
+
+### Modeling Domain Errors in Types
+
+Если при обсуждении domain требуется описать ошибки, то их следует моделировать так же,
+как и все остальные типы domain. Как правило, ошибки моделируются как choice type:
+
+```fsharp
+type PlaceOrderError =
+| ValidationError of string
+| ProductOutOfStock of ProductCode
+| RemoteServiceError of RemoteServiceError
+//...
+```
+
+* `ValidationError` - используется для validation свойств, такие как ошибки длины или формата.
+* `ProductOutOfStock` - customer пытается купить отсутствующий на складе продукт. Для этого может
+существовать специальный бизнес-процесс.
+* `RemoteServiceError` - пример обработки infrastructure error. Вместо того, чтобы просто выдавать
+исключение, мы могли бы обработать этот случай, например, повторив попытку соединения определенное
+количество раз, прежде чем сдаться.
+
+Плюсы использования choice type:
+
+* Он явно документирует все действия, которые могут пойти не так.
+* Любая дополнительная информация, связанная с ошибкой, также отображается явно.
+* Легко расширять (или сокращать) choice type по мере изменения требований.
+* Безопасно делать изменения в choice type, т.к. компилятор выдаст предупреждение,
+если будет пропущена обработка какой-либо ошибки.
+
+Нет необходимости пытаться заранее определить все возможные ошибки на этапе проектирования.
+Как правило, новые виды ошибок появляются в процессе разработки приложения. После их появления
+можно принять решение как их рассматривать: как domain errors или нет.
+Если это domain error, то надо добавить эту ошибку в choice type.
+
+### Error Handling Makes Your Code Ugly
+
+Одно из достоинств исключений заключается в том, что они сохраняют ваш код "happy path" чистым.
+
+Пример (псевдокод):
+
+```fsharp
+let validateOrder unvalidatedOrder =
+    let orderId = ... create order id (or throw exception)
+    let customerInfo = ... create info (or throw exception)
+    let shippingAddress = ... create and validate shippingAddress...
+    // etc
+```
+
+Если мы обрабатываем ошибки после каждого шага, то код становится намного уродливее.
+Обычно это либо условия (`if/else`), либо блоки `try/catch` для перехвата потенциальных исключений.
+
+Еще примеры (псевдокоды):
+
+```fsharp
+let validateOrder unvalidatedOrder =
+    let orderIdResult = ... create order id (or return Error)
+    if orderIdResult is Error then
+        return
+
+    let customerInfoResult = ... create name (or return Error)
+    if customerInfoResult is Error then
+        return
+    try
+        let shippingAddressResult = ... create valid address (or return Error)
+        if shippingAddress is Error then
+            return
+        // ...
+    with
+    | ?: TimeoutException -> Error "service timed out"
+    | ?: AuthenticationException -> Error "bad credentials"
+    // etc
+```
+
+Проблема при таком подходе - две трети кода теперь посвящено обработке ошибок.
+Как внедрить обработку ошибок, сохраняя при этом элегантность pipeline?
+
+## Chaining Result-Generating Functions
+
+Если у нас есть некоторые функции, создающие на выходе `Result`, как
+мы можем соединить их вместе чистым и красивым способом?
+
+Вот наглядное представление проблемы. Нормальную функцию можно
+визуализировать в виде участка железнодорожного пути:
+
+<img src="images/ch10_one_track.jpg" alt="Function as one track" width=650>
+
+Функцию с выходом `Result` можно визуализировать как железнодорожный путь, который
+разделяется на две части, например так:
+
+<img src="images/ch10_two_tracks.jpg" alt="Result as two tracks" width=650>
+
+Можно назвать такие функции *switch functions* (функциями переключения), по
+аналогии с железной дорогой. Их также часто называют "monadic" ("монадическими") функциями.
+
+Как соединить эти две "switch" функции? Если результат будет успешным, то мы перейдем к следующей
+функции в серии, но если результат является ошибкой, мы обойдем ее:
+
+<img src="images/ch10_bypass.jpg" alt="How to combine switch functions?" width=650>
+
+Как объединить эти два переключателя, чтобы обе дорожки failure были соединены?
+Очевидно - вот так:
+
+<img src="images/ch10_combine_tracks.jpg" alt="Combined two switches" width=650>
+
+Если соединить все steps в pipeline таким образом, то можно получить
+"two-track" model of error handling, или "railroad-oriented programming".
+Pipeline будет выглядеть следующим образом:
+
+<img src="images/ch10_combined_tracks.jpg" alt="Combined pipeline" width=650>
+
+При таком подходе верхняя дорожка - это happy path (счастливый путь), а нижняя дорожка -
+это failure path (путь неудачи). Вы начинаете с happy path, и если вам повезет, вы
+останетесь на нем до конца. Но если возникает ошибка, вы переходите на
+failure path и обходите остальные steps (шаги/стадии/этапы) в pipeline.
+
+Есть проблема: мы не можем составлять такие функции вместе, потому что каждая функция имеет
+два выхода, а вход у нее только один:
+
+<img src="images/ch10_cant_combine.jpg" alt="Two track functions can not combine" width=650>
+
+Как решить эту проблему? Заметим, что если бы вторая функция имела двухдорожечный
+вход, тогда не было бы никаких проблем с их соединением:
+
+<img src="images/ch10_one_two_combine.jpg" alt="Second function with two inputs" width=650>
+
+Итак, нужно преобразовать switch function с одним входом и двумя выходами в
+двухдорожечную функцию. Для этого создадим "adapter block", который имеет
+слот для switch function и который преобразует его в двухдорожечную функцию:
+
+<img src="images/ch10_switch_adapter.jpg" alt="Adapter block for switch function" width=650>
+
+Если преобраpовать все steps в двухдорожечные функции, то можно их красиво скомпоновать:
+
+<img src="images/ch10_final_track.jpg" alt="Final composed track" width=650>
+
+Конечным результатом является двухпутный pipeline с треком "success" и треком "failure",
+как мы и хотели.
+
+### Implementing the Adapter Blocks
+
+ch10_map_func.jpg
+ch10_bind_func.jpg
+ch10_bind_func_2.jpg
+ch10_map_error.jpg
+ch10_adapter_block.jpg
+ch10_tee_func.jpg
+ch10_deadend_func.jpg
