@@ -1441,6 +1441,251 @@ let app : WebPart =
         ]
 ```
 
+## Too Many Dependencies? Слишком много зависимостей?
+
+Что делать, если у функции слишком много зависимостей?
+
+### Решение 1. Разбить функцию на более мелкие части
+
+Функция делает очень много всего. Попробовать разбить на более мелкие части.
+
+### Решение 2. Сгруппировать зависимости
+
+Сгруппировать зависимости в record и передать их в функцию в виде одного параметра.
+
+### Решение 3. Использование "prebuilt" helper функции
+
+Зависимости могут пронизывать насквозь всю иерархию функций, с верхнего уровня до нижнего, где
+они и используются (и больше нигде).
+
+Это портит дизайн, т.к. всем промежуточным функциям не нужно ничего знать о зависимостях
+нижних функций.
+
+Гораздо лучше задать все зависимости для низкоуровневой функции на верхнем уровне,
+а затем просто передать эту функцию с prebuild baked in dependencies в головную
+функцию, где она будет использована.
+
+Пример. **Плохо**. (`validate` явно видит зависимости `toAddress`):
+
+```fsharp
+let toAddress checkAddressExists endPoint credentials unvalidatedAddress =
+    //                        only ^ needed ^ for checkAddressExists
+
+    // call the remote service
+    let checkedAddress = checkAddressExists endPoint credentials unvalidatedAddress
+    //                     2 extra parameters ^ passed in ^
+//...
+
+let validateOrder
+    checkProductExists
+    checkAddressExists
+    endPoint            // only needed for checkAddressExists
+    credentials         // only needed for checkAddressExists
+    unvalidatedOrder =
+//...
+```
+
+Пример. **Хорошо**.:
+
+```fsharp
+let placeOrder : PlaceOrderWorkflow =
+    // initialize information (e.g from configuration)
+    let endPoint = ...
+    let credentials = ...
+
+    // make a new version of checkAddressExists
+    // with the credentials baked in
+    let checkAddressExists = checkAddressExists endPoint credentials
+
+    // set up the steps in the workflow
+    let validateOrder =
+        validateOrder checkProductCodeExists checkAddressExists
+        // the new checkAddressExists ^
+        // is a one parameter function
+    //...
+```
+
+Такой подход использования "prebuilt" helper функции является распространенным приемом,
+который помогает упростить дизайн.
+Когда одна функция передается в другую функцию, "интерфейс" (сигнатура) функции должен быть
+как можно более минимальным, со всеми скрытыми зависимостями.
+
+## Testing Dependencies
+
+Преимущество явной передачи зависимостей проявляется в легкости тестирования.
+
+Здесь приведен пример unit-тестов, с использованием NUnit. Тесты
+можно посмотреть в [UnitTests.fs](/fs/chapter09/Tests/UnitTests.fs).
+
+Особенности:
+
+* В F# методы можно писать с пробелами и пунктуацией используя двойной символ backtick:
+
+```fsharp
+let ``If product doesn't exists, validation fails`` () =
+//...
+```
+
+* Легкость тестирования
+  * Тестируемая функция чистая - не имеет состояния и ничего не меняет.
+  * Все зависимости функции явные и легко заменяемые.
+  * Все side effects инкапсулируются в параметрах, а не непосредственно в самой функции.
+
+### F# testing frameworks
+
+В F# для тестирования можно использовать стандартные .NET framework'и: MSTest, NUnit, XUnit.
+
+Но еще есть специальные тестовые tools для использования с F#:
+
+* `FsUnit` wraps standard test frameworks like NUnit and XUnit with F#-friendly syntax.
+* `Unquote` shows all the values leading up to a test failure ("unrolling the
+stack" as it were).
+* `FsCheck` - реализация "property-based" подхода к тестированию.
+* `Expecto` is a lightweight F# testing framework that uses standard functions
+as test fixtures instead of requiring special attributes like `[<Test>]`.
+
+## The Assembled Pipeline. Сборка pipeline
+
+Собираем pipeline из определений типов и функций, реализаций функций в единый pipeline.
+
+Основные положения:
+
+1. Мы помещаем весь код, реализующий определенный рабочий процесс, в один и тот же
+модуль, названный в честь рабочего процесса (например, `PlaceOrderWorkflow.fs`).
+В моей версии реализации файл назван как
+[PlaceOrder.fs](fs/chapter09//OrderTaking/PlaceOrder.fs).
+
+2. В верхней части файла мы помещаем определения типов и функций.
+
+3. После этого мы помещаем implementations для каждого step (шага/стадии f).
+
+4. В самом низу файла собираем steps (шаги/стадии) в основную функцию wokflow.
+
+Плюс есть еще пара файлов, которые имеют разделяемые данные для нескольких workflow.
+Порядок описания кода в файлах такой же.
+
+* [SimpleTypes.fs](fs/chapter09/OrderTaking/SimpleTypes.fs) - описание и реализация простых
+типов данных.
+
+* [PublicTypes.fs](fs/chapter09/OrderTaking/PublicTypes.fs) - описание и реализация
+публичных типов данных, описываемых в API workflow.
+
+Пример частей файла `PlaceOrderWorkflow.fs`:
+
+```fsharp
+module PlaceOrderWorkflow =
+
+open SimpleTypes    // открытие модуля с общими простыми типами данных
+open API            // публичные типы данных, входящие в API
+
+// ==============================
+// Part 1: Design
+// ==============================
+
+// ----- Validate Order -----
+type CheckProductCodeExists = ProductCode -> bool
+type CheckedAddress = CheckedAddress of UnvalidatedAddress
+type CheckAddressExists = UnvalidatedAddress -> CheckedAddress
+
+type ValidateOrder =
+    CheckProductCodeExists          // dependency
+        -> CheckAddressExists       // dependency
+        -> UnvalidatedOrder         // input
+        -> ValidatedOrder           // output
+
+// ----- Price order -----
+type GetProductPrice = ...
+type PriceOrder = ...
+```
+
+After the types, in the same file, we can put the implementations that are
+based on those types:
+
+```fsharp
+// ==============================
+// Part 2: Implementation
+// ==============================
+
+// ------------------------------
+// ValidateOrder implementation
+// ------------------------------
+
+// Вспомогательные функции для функции validateOrder
+let toCustomerInfo (unvalidatedCustomerInfo: UnvalidatedCustomerInfo) = // ...
+let toAddress (checkAddressExists:CheckAddressExists) unvalidatedAddress = // ...
+let predicateToPassthru = // ...
+let toProductCode (checkProductCodeExists:CheckProductCodeExists) productCode = //...
+let toOrderQuantity productCode quantity = //...
+let toValidatedOrderLine checkProductExists (unvalidatedOrderLine:UnvalidatedOrderLine) = //...
+
+/// Implementation of ValidateOrder step
+let validateOrder : ValidateOrder =
+    fun checkProductCodeExists checkAddressExists unvalidatedOrder ->
+        let orderId =
+            unvalidatedOrder.OrderId
+            |> OrderId.create
+        let customerInfo = ...
+        let shippingAddress = ...
+        let billingAddress = ...
+        let lines =
+            unvalidatedOrder.Lines
+            |> List.map (toValidatedOrderLine checkProductCodeExists)
+        let validatedOrder : ValidatedOrder = {
+            OrderId = orderId
+            CustomerInfo = customerInfo
+            ShippingAddress = shippingAddress
+            BillingAddress = billingAddress
+            Lines = lines
+        }
+        validatedOrder
+```
+
+Аналогично делается реализация для всех остальных steps.
+В самом низу файла описывается реализация главной функции workflow:
+
+```fsharp
+// ------------------------------
+// The complete workflow
+// ------------------------------
+let placeOrder
+    checkProductExists                  // dependency
+    checkAddressExists                  // dependency
+    getProductPrice                     // dependency
+    createOrderAcknowledgmentLetter     // dependency
+    sendOrderAcknowledgment             // dependency
+    : PlaceOrderWorkflow =              // definition of function
+
+    fun unvalidatedOrder ->
+        let validatedOrder =
+            unvalidatedOrder
+            |> validateOrder checkProductExists checkAddressExists
+        let pricedOrder =
+            validatedOrder
+            |> priceOrder getProductPrice
+        let acknowledgmentOption =
+            pricedOrder
+            |> acknowledgeOrder createOrderAcknowledgmentLetter sendOrderAcknowledgment
+        let events =
+            createEvents pricedOrder acknowledgmentOption
+        events
+```
+
+## Wrapping Up
+
+В этой главе был реализован workflow:
+
+* Реализация workflow steps.
+* Работа с зависимостями.
+* Реализацию каждого шага легко протестировать в изоляции.
+* При несовпадении входных и выходных типов функций использовались следующие методы:
+  * Использование *adapter function* (функции адаптера) для преобразования функции из
+  одной "формы" в другую.
+  * *"Lifting"* отдельных типов в один общий тип.
+  * Использование *partial application* (частичного применения) для встраивания зависимостей
+  в функцию.
+
 # Links
 
 * [Suave framework](https://suave.io/)
+
+* F# testing frameworks: `FsUnit`, `Unquote`, `FsCheck`, `Expecto`.

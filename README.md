@@ -47,3 +47,5 @@ Alberto Brandolini - создатель метода "Event Storming".
 * [Sagas (Saga pattern)](http://vasters.com/archive/Sagas.html)
 
 * [Suave framework](https://suave.io/)
+
+* F# testing frameworks: `FsUnit`, `Unquote`, `FsCheck`, `Expecto`.
