@@ -1959,10 +1959,192 @@ failure path и обходите остальные steps (шаги/стадии
 
 ### Implementing the Adapter Blocks
 
-ch10_map_func.jpg
-ch10_bind_func.jpg
-ch10_bind_func_2.jpg
-ch10_map_error.jpg
+Функциональный адаптер, преобразующий switch functions в two-track functions называется
+`bind` или `flatMap` в терминологии ФП. Реализация:
+
+```fsharp
+let bind switchFn =
+    fun twoTrackInput ->
+        match twoTrackInput with
+        | Ok success -> switchFn success
+        | Error failure -> Error failure
+```
+
+Эквивалентная, но более распространенная реализация:
+
+```fsharp
+let bind switchFn twoTrackInput =
+    match twoTrackInput with
+    | Ok success -> switchFn success
+    | Error failure -> Error failure
+```
+
+Обе реализации `bind` эквивалентны: вторая реализация, если провести с ней операцию каррирования
+будет аналогична первой
+
+Другой полезный функциональный адаптер - это блок, который преобразует однопутные функции в
+двухпутные функции:
+
+<img src="images/ch10_map_func.jpg" alt="Map function" width=650>
+
+В терминологии ФП такие функции обычно называется `map`. Его реализация:
+
+```fsharp
+let map f aResult =
+    match aResult with
+    | Ok success -> Ok (f success)
+    | Error failure -> Error failure
+```
+
+`bind`, `map` и нескольких других подобных функций создают мощный инструментарий, который
+можно использовать для compose (соединения) несовпадающих функций.
+
+### Organizing the Result Functions
+
+Где мы должны разместить эти новые функции в нашем коде? Обычно функции помещаются в модуль
+с тем же именем, что и тип. Например модуль `Result` будет выглядеть следующим образом:
+
+```fsharp
+/// Define the Result type
+type Result<'Success,'Failure> =
+| Ok of 'Success
+| Error of 'Failure
+
+/// Functions that work with Result
+module Result =
+    let bind f aResult = ...
+    let map f aResult = ...
+```
+
+Модули подобного рода (например, `Result.fs`) помещаются перед типами доменов в структуре проекта.
+
+### Composition and Type Checking
+
+Типы `Result` или `Option` можно составить вместе при помощи `bind` или `map` если
+тип выходных данных из одной функции будет соответствовать типу входных данных в другой функции.
+Пример:
+
+```fsharp
+type FunctionA = Apple -> Result<Bananas,...>
+type FunctionB = Bananas -> Result<Cherries,...>
+type FunctionC = Cherries -> Result<Lemon,...>
+
+// The bind function would be used like this:
+let functionA : FunctionA = ...
+let functionB : FunctionB = ...
+let functionC : FunctionC = ...
+
+let functionABC input =
+    input
+    |> functionA
+    |> Result.bind functionB
+    |> Result.bind functionC
+```
+
+<img src="images/ch10_bind_func.jpg" alt="Bind function" width=650>
+
+Но, `functionA` и `functionC` невозможно соединить даже с помощью `bind`,
+потому что типы разные:
+
+<img src="images/ch10_bind_func_2.jpg" alt="Function with various data type can not be composed" width=650>
+
+## Converting to a Common Error Type
+
+В отличие от success track, где тип может меняться на каждом шаге,
+the error track имеет один и тот же тип на всем протяжении track. То есть каждая
+функция в pipeline должна иметь *один и тот же* тип ошибки.
+
+Т.е. типы ошибок должны быть совместимы друг с другом.
+Создадим функцию, похожую на `map`, но которая воздействует на значение в failure track.
+Функция называется `mapError`:
+
+```fsharp
+let mapError f aResult =
+    match aResult with
+    | Ok success -> Ok success
+    | Error failure -> Error (f failure)
+```
+
+Например, есть `AppleError` и `BananaError`, и есть две функции, которые используют их в
+качестве типов ошибок:
+
+```fsharp
+type FunctionA = Apple -> Result<Bananas,AppleError>
+type FunctionB = Bananas -> Result<Cherries,BananaError>
+```
+
+The mismatch in the error types means that  and FunctionB cannot be
+composed. What we need to do is create a new type that both AppleError and
+BananaError can be converted to—a choice between the two. Let’s call this FruitError :
+
+Несоответствие типов ошибок означает, что `FunctionA` и `FunctionB` не могут быть composed.
+Нужно создать новый тип, в который можно преобразовать как `AppleError`, так и
+`BananaError` - choice type:
+
+```fsharp
+type FruitError =
+    | AppleErrorCase of AppleError
+    | BananaErrorCase of BananaError
+```
+
+Затем мы можем преобразовать `functionA`, чтобы получить тип результата `FruitError`:
+
+```fsharp
+let functionA : FunctionA = ...
+
+let functionAWithFruitError input =
+    input
+    |> functionA
+    |> Result.mapError (fun appleError -> AppleErrorCase appleError)
+```
+
+Или упрощенно:
+
+```fsharp
+let functionAWithFruitError input =
+    input
+    |> functionA
+    |> Result.mapError AppleErrorCase
+```
+
+Вот схема преобразования:
+
+<img src="images/ch10_map_error.jpg" alt="Map error" width=650>
+
+Если мы посмотрим на сигнатуры `functionA` и` functionAWithFruitError`, мы увидим, что
+теперь они имеют разные типы ошибок:
+
+```fsharp
+// type of functionA
+Apple -> Result<Bananas,AppleError>
+
+// type of functionAWithFruitError
+Apple -> Result<Bananas,FruitError>
+```
+
+Аналогчно делается для функции `functionB`. Теперь можно соединить их вместе:
+
+```fsharp
+let functionA : FunctionA = ...     // ... Apple -> Result<Bananas,AppleError>
+let functionB : FunctionB = ...     // ... Bananas -> Result<Cherries,BananaError>
+
+// convert functionA to use "FruitError"
+// ... Apple -> Result<Bananas,FruitError>
+let functionAWithFruitError input =
+input |> functionA |> Result.mapError AppleErrorCase
+
+// convert functionB to use "FruitError"
+// ... Bananas -> Result<Cherries, FruitError>
+let functionBWithFruitError input =
+input |> functionB |> Result.mapError BananaErrorCase
+
+// and now we can compose the new versions with "bind"
+let functionAB input =      // ... Apple -> Result<Cherries,FruitError>
+    input
+    |> functionAWithFruitError
+    |> Result.bind functionBWithFruitError
+```
+
 ch10_adapter_block.jpg
 ch10_tee_func.jpg
 ch10_deadend_func.jpg
